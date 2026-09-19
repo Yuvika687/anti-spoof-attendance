@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Raw dataset downloads (tens of GB; never commit)
+raw_downloads/
+
+# Datasets (too large for version control; regenerate via prepare_*.py)
+data/celeba_spoof/*
+data/casia_fasd/*
+!data/celeba_spoof/.gitkeep
+!data/casia_fasd/.gitkeep
+data/samples/masked/*
+!data/samples/masked/.gitkeep
+
+# Trained weights / downloaded models (regenerate via train.py, auto-downloaded by face_utils.py)
+models/*.pth
+models/*.onnx
+models/*.tflite
+
+# Generated outputs
+outputs/plots/*
+outputs/predictions/*
+!outputs/plots/.gitkeep
+!outputs/predictions/.gitkeep
+logs/*.csv
+
+# OS / editor
+.DS_Store
+.ipynb_checkpoints/
