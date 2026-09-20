@@ -144,17 +144,28 @@ Python 3.10 or 3.11).
 1. Official source: [ZhangYuanhan-AI/CelebA-Spoof on GitHub](https://github.com/ZhangYuanhan-AI/CelebA-Spoof)
    (625,537 images, 10,177 identities, non-commercial research use). Its
    README links to:
-   - Google Drive folder: 50 split archive parts named
-     `CelebA_Spoof.zip.001` … `CelebA_Spoof.zip.050` (~1 GB each, ~50 GB total)
+   - Google Drive folder: split archive parts named
+     `CelebA_Spoof.zip.001` … `CelebA_Spoof.zip.0NN` (~1 GB each; the
+     actual part count observed at download time was ~74, not the ~50
+     the repo README implies — Drive folder contents can change)
    - Baidu Netdisk (password `61fd`), same content
-2. Download all 50 parts, then reassemble and extract:
+2. Download all parts, then reassemble and extract:
    ```bash
    cat CelebA_Spoof.zip.* > CelebA_Spoof_full.zip
    unzip CelebA_Spoof_full.zip -d CelebA_Spoof
    ```
-   (Downloading 50 files by hand from Drive is tedious — the tool `gdown`
-   can pull an entire shared Drive folder in one command:
-   `pip install gdown && gdown --folder <the_drive_folder_url>`.)
+   `gdown` can pull an entire shared Drive folder in one command instead
+   of downloading files by hand:
+   `pip install gdown && gdown --folder <the_drive_folder_url> --continue --retries 3`.
+
+   **Known snag:** Google Drive enforces a per-file quota on popular
+   shared files ("Too many users have viewed or downloaded this file
+   recently"), unrelated to your connection speed — it only clears with
+   time (observed: a few hours up to ~24h). `scripts/resume_celeba_download.sh`
+   wraps the exact resume command (`--continue` safely skips parts
+   already downloaded) so you can just re-run it periodically until every
+   part succeeds. **Every part is required** before anything can be
+   extracted, since the archive was split at the byte level, not by folder.
 3. The dataset's own label ground-truth (`metas/*.json`) uses index `43` of
    a 43-attribute-per-image vector as the live(0)/spoof(1) label, and ships
    a bounding-box `.txt` file alongside every image. In practice, once
