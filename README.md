@@ -72,6 +72,8 @@ For comparison, a classical (non-deep-learning) Laplacian-sharpness baseline sco
 
 These numbers come from training on data that was audited and label-corrected against CelebA-Spoof's own official ground truth (see the dataset note above — 2,022 images had their folder-implied label overridden by the authoritative `metas/*.json` label before training). CASIA-FASD cross-dataset generalization has not been tested (dataset not obtained). Full details, discussion, and a training-curve plot are in [`report_notes.md`](report_notes.md).
 
+The full `detect → crop → classify` pipeline has also been verified against a real live webcam feed: 30/30 frames had a face correctly detected, at **26.7 FPS**, with the live subject correctly classified LIVE (98–99.7% confidence). Getting this working required pinning `mediapipe==0.10.30` — newer builds crash on Apple M4 / Metal 4 (see `requirements.txt`).
+
 ## 🚀 Installation & usage
 
 ```bash
