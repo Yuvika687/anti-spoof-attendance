@@ -86,6 +86,18 @@ python realtime_pipeline.py
 ```
 
 > Datasets are **not** included: CelebA-Spoof is research-only (non-commercial) and CASIA-FASD requires requesting access. Both must be obtained from their authors.
+>
+> ⚠️ **Known limitation, found by auditing the actual download:** the Google
+> Drive mirror linked from the official CelebA-Spoof repo turned out to be
+> an incomplete copy of the full release — it contains **9,196 identities /
+> 561,575 images**, not the paper's published **10,177 identities /
+> 625,537 images** (~90% of the full dataset). Our training subset is still
+> correctly identity-disjoint and class-balanced within what we have, but
+> this repo has not trained on the literal complete CelebA-Spoof release.
+> We also found that trusting the `live`/`spoof` *folder name* for labels
+> (rather than the dataset's own `metas/*.json` ground truth) mislabels
+> 0.36% of images — `prepare_celeba_subset.py` now cross-checks against
+> the official labels and corrects this automatically when present.
 
 ## 🗂️ Project structure
 
