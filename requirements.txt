@@ -4,7 +4,12 @@ torchvision>=0.16.0
 
 # Computer vision / face detection
 opencv-python>=4.8.0
-mediapipe>=0.10.9
+# Pinned exactly: mediapipe>=0.10.31 (incl. 1.0.x) crashes with
+# "Check failed: service_ Service is unavailable" / DrishtiMetalHelper on
+# Apple M4 + Metal 4 hardware -- confirmed via clean reinstall, sandbox
+# on/off, and a full OS restart, none of which fixed it. 0.10.30 uses a
+# working Metal code path. Re-test with a newer version before bumping this.
+mediapipe==0.10.30
 
 # Data / training utils
 numpy>=1.24.0
