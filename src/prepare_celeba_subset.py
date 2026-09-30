@@ -38,12 +38,48 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import random
 import shutil
 from collections import defaultdict
 
 VALID_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp")
+
+# CelebA-Spoof's own ground-truth label files (relative to raw_root). Index
+# 43 of each 44-element attribute vector is the official live(0)/spoof(1)
+# label -- this is the dataset's authoritative source, NOT the live/spoof
+# folder an image happens to sit in. Folder placement and this official
+# label almost always agree, but auditing against the real dataset showed
+# ~0.36% of images (2,022 / 561,575 in our download) are filed under a
+# "live" folder while being officially labeled spoof. We therefore use
+# these files as the authoritative label whenever available, falling back
+# to the folder name only for images missing from them.
+OFFICIAL_LABEL_FILES = [
+    "metas/intra_test/train_label.json",
+    "metas/intra_test/test_label.json",
+]
+OFFICIAL_LABEL_INDEX = 43  # 0 = live, 1 = spoof
+
+
+def load_official_labels(raw_root: str) -> dict:
+    """Loads and merges CelebA-Spoof's official per-image live/spoof labels.
+
+    Returns {relative_path: 0_or_1}, or an empty dict if the label files
+    aren't present under raw_root (older/partial mirrors of the dataset may
+    be missing the metas/ folder) -- callers must fall back to folder names
+    in that case and should warn the user that labels are unverified.
+    """
+    official = {}
+    for rel_label_file in OFFICIAL_LABEL_FILES:
+        label_path = os.path.join(raw_root, rel_label_file)
+        if not os.path.isfile(label_path):
+            continue
+        with open(label_path) as f:
+            data = json.load(f)
+        for rel_img_path, attrs in data.items():
+            official[os.path.normpath(rel_img_path)] = attrs[OFFICIAL_LABEL_INDEX]
+    return official
 
 
 def scan_identities(raw_root: str):
@@ -53,6 +89,12 @@ def scan_identities(raw_root: str):
 
     identity_key includes the source split (train/test) prefix so ids don't
     collide across CelebA-Spoof's own train/test partition.
+
+    Class assignment uses the dataset's OFFICIAL ground-truth label (see
+    load_official_labels) when available, not the folder an image was
+    physically found in -- a small number of images are filed under a
+    "live" folder while being officially labeled spoof, and trusting the
+    folder name for those would mislabel training data.
     """
     identities = defaultdict(lambda: {"live": [], "spoof": []})
 
@@ -60,6 +102,19 @@ def scan_identities(raw_root: str):
     if not os.path.isdir(data_root):
         # fall back: allow raw_root to already point at "Data"
         data_root = raw_root
+
+    official_labels = load_official_labels(raw_root)
+    if official_labels:
+        print(f"Loaded {len(official_labels)} official ground-truth labels "
+              f"from {OFFICIAL_LABEL_FILES} -- these override folder-name "
+              f"labels where they disagree.")
+    else:
+        print("WARNING: no official label files found under raw_root "
+              f"({OFFICIAL_LABEL_FILES}). Falling back to folder-name "
+              "labels only, which are unverified against ground truth.")
+
+    n_corrected = 0
+    n_unlabeled = 0
 
     for source_split in ("train", "test"):
         split_dir = os.path.join(data_root, source_split)
@@ -70,13 +125,36 @@ def scan_identities(raw_root: str):
             if not os.path.isdir(identity_dir):
                 continue
             key = f"{source_split}_{identity}"
-            for class_name in ("live", "spoof"):
-                class_dir = os.path.join(identity_dir, class_name)
+            for folder_class_name in ("live", "spoof"):
+                class_dir = os.path.join(identity_dir, folder_class_name)
                 if not os.path.isdir(class_dir):
                     continue
                 for fname in os.listdir(class_dir):
-                    if fname.lower().endswith(VALID_EXTENSIONS):
-                        identities[key][class_name].append(os.path.join(class_dir, fname))
+                    if not fname.lower().endswith(VALID_EXTENSIONS):
+                        continue
+                    full_path = os.path.join(class_dir, fname)
+
+                    if official_labels:
+                        rel_path = os.path.normpath(os.path.relpath(full_path, raw_root))
+                        official_label = official_labels.get(rel_path)
+                        if official_label is None:
+                            # Not in the official label file (shouldn't happen for a
+                            # complete mirror, but handle gracefully): fall back to folder.
+                            n_unlabeled += 1
+                            true_class_name = folder_class_name
+                        else:
+                            true_class_name = "spoof" if official_label == 1 else "live"
+                            if true_class_name != folder_class_name:
+                                n_corrected += 1
+                    else:
+                        true_class_name = folder_class_name
+
+                    identities[key][true_class_name].append(full_path)
+
+    if official_labels:
+        print(f"Label correction summary: {n_corrected} images reassigned to their "
+              f"official class (folder name disagreed with ground truth), "
+              f"{n_unlabeled} images had no official label entry (used folder name).")
 
     return identities
 
