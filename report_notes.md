@@ -99,10 +99,27 @@ into directly, receiving the already-cropped BGR face image.
 | CelebA-Spoof (subset) | Test | 1,950 | 1,950 | |
 | CASIA-FASD | Extra test only | not obtained | not obtained | requires access request to original authors; skipped for this submission |
 
-Subset drawn from the full 625,537-image, 10,177-identity CelebA-Spoof
-release, split across 9,196 identities found in the download: 6,437 train /
-1,379 val / 1,380 test identities, with **zero identity overlap** between
-splits.
+Subset drawn from CelebA-Spoof, split across 9,196 identities found in our
+download: 6,437 train / 1,379 val / 1,380 test identities, with **zero
+identity overlap** between splits (directly verified, not just assumed from
+the split logic).
+
+**Two data-quality issues were found by auditing the download and fixed
+before the final run reported below:**
+- The specific Google Drive mirror linked from the official CelebA-Spoof
+  repo turned out to be an incomplete copy of the full release: **9,196
+  identities / 561,575 images**, not the paper's published **10,177
+  identities / 625,537 images** (~90% of the full dataset). Our subset is
+  still correctly identity-disjoint and class-balanced within the data we
+  have, but this is not literally the complete official dataset.
+- Cross-checking the `live`/`spoof` *folder* each image was filed under
+  against the dataset's own official ground-truth labels
+  (`metas/intra_test/{train,test}_label.json`) found **2,022 images out of
+  561,575 (0.36%)** where a "live"-folder image was officially labeled
+  spoof (zero mismatches in the reverse direction). `prepare_celeba_subset.py`
+  now uses the official label as authoritative whenever available; the
+  subset and all results below were built/trained/evaluated **after** this
+  fix.
 
 Identity-disjoint splitting (`src/prepare_celeba_subset.py`) assigns whole
 identity folders to exactly one of train/val/test, preventing the model
@@ -125,11 +142,11 @@ liveness, which would not generalize to new users of the attendance system.
 
 `[INSERT outputs/plots/training_curves.png]`
 
-Training accuracy rose from 85.6% (epoch 1) to 99.5% (epoch 15); validation
-accuracy rose from 93.2% to a peak of **98.64%** at epoch 6, then plateaued
-in the 98.3–98.6% range for the remaining epochs with no signs of
-overfitting collapse (val loss stayed flat/low rather than rising while
-train loss kept falling, i.e. only mild, expected train/val divergence).
+Training accuracy rose from 85.6% (epoch 1) to 99.6% (epoch 15); validation
+accuracy rose from 93.7% to a peak of **99.21%** (epochs 14-15), climbing
+steadily throughout training with no signs of overfitting collapse (val
+loss stayed flat/low rather than rising while train loss kept falling,
+i.e. only mild, expected train/val divergence).
 
 ### 6.2 CelebA-Spoof held-out test set
 
@@ -138,17 +155,18 @@ identities never seen during training:
 
 | Metric | Value |
 |---|---|
-| Accuracy | 99.03% |
-| APCER | 1.23% |
-| BPCER | 0.72% |
-| HTER | 0.97% |
-| Precision (LIVE) | 0.9878 |
-| Recall (LIVE) | 0.9928 |
-| Precision (SPOOF) | 0.9928 |
-| Recall (SPOOF) | 0.9877 |
+| Accuracy | 99.15% |
+| APCER | 1.13% |
+| BPCER | 0.56% |
+| HTER | 0.85% |
+| Precision (LIVE) | 0.9888 |
+| Recall (LIVE) | 0.9944 |
+| Precision (SPOOF) | 0.9943 |
+| Recall (SPOOF) | 0.9887 |
 
-Confusion matrix: of 1,950 live images, 14 were wrongly rejected as spoof;
-of 1,950 spoof images, 24 were wrongly accepted as live.
+Confusion matrix: of 1,950 live images, 11 were wrongly rejected as spoof;
+of 1,950 spoof images, 22 were wrongly accepted as live (33 total errors
+out of 3,900).
 
 `[INSERT outputs/plots/confusion_matrix_test.png]`
 
@@ -173,10 +191,10 @@ screen"), thresholded to best-separate the same CelebA-Spoof test set:
 
 | Model | Accuracy | APCER | BPCER |
 |---|---|---|---|
-| Classical baseline (Laplacian-variance) | 60.79% | 47.33% | 31.08% |
-| **Ours (MobileNetV3-Small CNN)** | **99.03%** | **1.23%** | **0.72%** |
+| Classical baseline (Laplacian-variance) | 61.23% | 41.38% | 36.15% |
+| **Ours (MobileNetV3-Small CNN)** | **99.15%** | **1.13%** | **0.56%** |
 
-The huge gap (60.8% vs. 99.0% accuracy) makes the case for a learned
+The huge gap (61.2% vs. 99.2% accuracy) makes the case for a learned
 approach concretely: a single hand-crafted sharpness statistic barely beats
 chance-level separation on modern, high-quality spoof media, whereas the
 CNN learns much richer, harder-to-fake texture/frequency cues.
@@ -205,31 +223,39 @@ correctly rejected]`.
   not — APCER measures the security-critical error, BPCER the usability
   one (see README.md Section 10 for the full explanation).
 
-- **Failure cases observed** (inspected directly from
-  `outputs/predictions/predictions_test.csv`, 38 wrong out of 3,900 total):
-  the model's most confident **false accepts** (spoof→live) were printed
-  photos where the face itself was sharply focused under even studio-style
-  lighting, with the surrounding photo/poster content occupying much of the
-  frame — i.e. cases where the spoof medium's face region looks
-  photographically "clean" rather than screen-blurred or moiré-textured.
-  The model's most confident **false rejects** (live→spoof) were,
-  surprisingly, live photos that themselves have heavy blur and a
-  fine repeating scanline/moiré-like texture across the whole image
-  (consistent with the original photo having been captured off a screen
-  or from low-quality broadcast footage before being included in the
-  dataset as a "live" sample). This suggests the model has partly learned
-  "blur + moiré texture -> spoof" as a shortcut cue, which is usually
-  correct but misfires on the rare live photo that happens to share that
-  texture for unrelated reasons (e.g. a poor-quality source photo).
+- **Failure cases observed** (inspected directly by opening the actual
+  image files, not just their filenames, from
+  `outputs/predictions/predictions_test.csv`, 33 wrong out of 3,900 total;
+  only a handful of the 33 were manually viewed, so treat this as a
+  small-sample qualitative read, not a systematic analysis): the model's
+  most confident **false accepts** (spoof→live) were printed/magazine-style
+  photos where the labeled face occupies a small fraction of the full
+  frame relative to body/background content — e.g. a full-body photo where
+  the actual face region is a small part of the crop. The model's most
+  confident **false rejects** (live→spoof) were, somewhat counter to what
+  we originally expected, *not* blurry or low-quality images — they were
+  sharp, professionally lit photos with a magazine/studio-photography look
+  (stylized pose, dramatic lighting). Since CelebA-Spoof's "live" label
+  means "a genuine capture of this identity" and is not restricted to
+  casual webcam-style selfies, some live images are themselves professional
+  photography that plausibly shares visual characteristics with the
+  printed-photo spoof attacks elsewhere in the dataset, making them
+  genuinely ambiguous even for a human without knowing the dataset's own
+  ground truth. (An earlier version of this section, written before the
+  label-correction fix and retrain, described a different "blur + moiré
+  texture" pattern from a different, less-accurate, checkpoint's errors —
+  that pattern did not hold up when re-examined against this final run's
+  actual misclassified images, which is why it's been replaced here rather
+  than kept.)
 
 - **Effect of the decision threshold** (from `evaluate.py --threshold`,
   same test set):
 
   | Threshold | Accuracy | APCER | BPCER | HTER |
   |---|---|---|---|---|
-  | 0.3 (looser) | 99.15% | 0.82% | 0.87% | 0.85% |
-  | 0.5 (default) | 99.03% | 1.23% | 0.72% | 0.97% |
-  | 0.7 (stricter) | 98.95% | 1.54% | 0.56% | 1.05% |
+  | 0.3 (looser) | 99.18% | 0.82% | 0.82% | 0.82% |
+  | 0.5 (default) | 99.15% | 1.13% | 0.56% | 0.85% |
+  | 0.7 (stricter) | 98.95% | 1.59% | 0.51% | 1.05% |
 
   Raising the threshold trades lower BPCER (fewer real users annoyed) for
   higher APCER (more attacks slip through) — the classic security/usability
@@ -247,12 +273,16 @@ This project built a two-stage liveness gate — mask-aware MediaPipe face
 detection followed by a fine-tuned MobileNetV3-Small binary classifier —
 that sits in front of face recognition in an attendance pipeline and
 blocks presentation attacks before they ever reach identity matching.
-Trained on a 26,000-image identity-disjoint subset of CelebA-Spoof, the
-final model reached **99.03% accuracy and 0.97% HTER** on 3,900 held-out
-test images from identities never seen during training, and massively
-outperformed a classical Laplacian-sharpness baseline (60.8% accuracy),
-demonstrating the value of a learned approach over hand-crafted heuristics
-for this task. The main limitation is that generalization was only tested
+Trained on a 26,000-image identity-disjoint subset of CelebA-Spoof (built
+and labeled against the dataset's own official ground truth after an audit
+found and fixed a 0.36% folder-label mismatch), the final model reached
+**99.15% accuracy and 0.85% HTER** on 3,900 held-out test images from
+identities never seen during training, and massively outperformed a
+classical Laplacian-sharpness baseline (61.2% accuracy), demonstrating the
+value of a learned approach over hand-crafted heuristics for this task.
+Two honest limitations: the specific dataset mirror used contains ~90% of
+the officially published CelebA-Spoof (9,196 of 10,177 identities), so this
+is not literally the complete dataset; and generalization was only tested
 within CelebA-Spoof's own capture distribution — CASIA-FASD cross-dataset
 testing and real-webcam/masked-photo validation were not completed for
 this submission (see Sections 6.3, 6.5, 6.6). `[Optionally add a concrete

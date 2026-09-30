@@ -44,7 +44,7 @@ flowchart TD
 | ✅ | Real-time webcam pipeline | Decision log written for every accepted/rejected frame |
 | ✅ | ONNX export | Optional, for faster inference |
 | ✅ | Classical baseline | Simple OpenCV blur-based baseline for comparison |
-| 🔜 | Published results | Model trained and evaluated, numbers added below |
+| ✅ | Published results | 99.15% accuracy, 0.85% HTER — see below |
 | 🔜 | Cross-dataset test on CASIA-FASD | Needs dataset access from the authors |
 | 🔜 | ArcFace + attendance integration | Teammate's module |
 
@@ -59,7 +59,18 @@ flowchart TD
 
 ## 📈 Results
 
-Training is in progress. Final metrics (accuracy, APCER, BPCER, HTER on the CelebA-Spoof test split and on CASIA-FASD) will be published here once they are measured.
+Real training run on a 26,000-image identity-disjoint CelebA-Spoof subset (MobileNetV3-Small, 15 epochs), evaluated on 3,900 held-out test images from identities never seen during training:
+
+| Metric | Value |
+|---|---|
+| Accuracy | **99.15%** |
+| APCER (spoof accepted as live) | **1.13%** |
+| BPCER (live rejected as spoof) | **0.56%** |
+| HTER | **0.85%** |
+
+For comparison, a classical (non-deep-learning) Laplacian-sharpness baseline scores **61.2%** accuracy on the same test set.
+
+These numbers come from training on data that was audited and label-corrected against CelebA-Spoof's own official ground truth (see the dataset note above — 2,022 images had their folder-implied label overridden by the authoritative `metas/*.json` label before training). CASIA-FASD cross-dataset generalization has not been tested (dataset not obtained). Full details, discussion, and a training-curve plot are in [`report_notes.md`](report_notes.md).
 
 ## 🚀 Installation & usage
 
@@ -121,7 +132,7 @@ anti-spoof-attendance/
 - [x] Mask-aware face detection (Stage 1)
 - [x] CNN liveness classifier, training + evaluation code (Stage 2)
 - [x] Real-time webcam pipeline and decision logging
-- [ ] Train on the CelebA-Spoof subset and publish real metrics
+- [x] Train on the CelebA-Spoof subset and publish real metrics
 - [ ] Evaluate cross-dataset on CASIA-FASD
 - [ ] Integrate with the ArcFace attendance module
 - [ ] Add a LICENSE and a short model card
