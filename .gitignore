@@ -22,7 +22,7 @@ data/samples/masked/*
 # comparison checkpoints under models/<backbone>/ added by train.py's
 # auto-namespacing (models/*.pth alone doesn't match nested paths).
 models/**/*.pth
-models/*.onnx
+models/**/*.onnx
 models/*.tflite
 models/*.task
 
