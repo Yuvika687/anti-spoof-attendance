@@ -75,6 +75,18 @@ class TestBuildSummary(unittest.TestCase):
         self.assertIn("99.04%", notes_text)
         self.assertIn("98.69%", notes_text)
 
+    def test_backbone_latency_present_when_benchmark_has_run(self):
+        latency_path = os.path.join(RESULTS_DIR, "backbone_latency.json")
+        latency = self.summary["backbone_comparison"]["latency_and_size"]
+        if os.path.isfile(latency_path):
+            self.assertIsNotNone(latency)
+            for backbone in ("mobilenet_v3_small", "resnet18", "efficientnet_b0"):
+                self.assertIn(backbone, latency)
+                self.assertGreater(latency[backbone]["param_count"], 0)
+                self.assertGreater(latency[backbone]["model_file_size_mb"], 0)
+        else:
+            self.assertIsNone(latency)
+
     def test_is_json_serializable(self):
         import json
         json.dumps(self.summary)  # must not raise
