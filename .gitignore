@@ -37,6 +37,8 @@ logs/*.csv
 results/*.json
 results/plots/*
 !results/plots/.gitkeep
+results/gradcam/*
+!results/gradcam/.gitkeep
 
 # OS / editor
 .DS_Store
