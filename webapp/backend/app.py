@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sys
+import time
 from collections import deque
 from datetime import datetime
 
@@ -426,58 +427,56 @@ def _save_debug_crop(crop):
 # ---------------------------------------------------------------------------
 # Live detection: the real pipeline, one frame at a time
 # ---------------------------------------------------------------------------
-@app.route("/api/detect", methods=["POST"])
-def api_detect():
+def _run_pipeline_core(frame, decode_ms: float, use_smoothing: bool):
     """
-    Accepts one JPEG frame (multipart form field 'frame'), runs the real
-    face_utils.FaceDetector + liveness_infer.LivenessPredictor on it, logs
-    the decision to the real CSV log (same AttendanceLogger the actual
-    realtime_pipeline.py script uses), and returns real results.
+    Runs the real Detect -> Crop -> Classify -> Decision stages on one
+    already-decoded BGR frame, with real per-stage timing (the pipeline
+    strip on the Live page, TASK P). Returns a plain dict, not a Flask
+    response, so both /api/detect (smoothing + decision-log side effects)
+    and the sample-image demo endpoints (no smoothing, no logging --
+    each call is an independent static image, not a video stream frame)
+    can share this without duplicating the detection/decision logic.
     """
-    if "frame" not in request.files:
-        return jsonify({"error": "no frame uploaded"}), 400
+    timings = {"frame_ms": decode_ms}
 
-    file_bytes = np.frombuffer(request.files["frame"].read(), dtype=np.uint8)
-    frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    if frame is None:
-        return jsonify({"error": "could not decode image"}), 400
-
-    global _last_logged_decision, _face_was_present
-
+    t0 = time.perf_counter()
     detections = detector.detect(frame)
+    timings["detect_ms"] = (time.perf_counter() - t0) * 1000
 
     if DEBUG_SAVE_FRAMES:
         _save_debug_frame(frame, detections)
 
     if not detections:
-        # Face left the frame: reset smoothing so a freshly-reappearing
-        # face doesn't get averaged in with stale, unrelated probabilities.
-        _recent_probs.clear()
-        _face_was_present = False
-        return jsonify({"face_detected": False})
+        return {"face_detected": False, "timings": timings}
 
     best = max(detections, key=lambda d: d.width * d.height)
+
+    t0 = time.perf_counter()
     crop = crop_face(frame, best)
+    timings["crop_ms"] = (time.perf_counter() - t0) * 1000
     if crop is None or crop.size == 0:
-        return jsonify({"face_detected": False})
+        return {"face_detected": False, "timings": timings}
 
     if DEBUG_SAVE_FRAMES:
         _save_debug_crop(crop)
 
-    # Raw, single-frame probability (unsmoothed) -- shown to the user
-    # alongside the smoothed decision so the smoothing is visible, not
-    # hidden.
+    t0 = time.perf_counter()
     raw_prob_spoof = predictor.predict_prob(crop)
-    _recent_probs.append(raw_prob_spoof)
-    smoothed_prob_spoof = sum(_recent_probs) / len(_recent_probs)
+    timings["classify_ms"] = (time.perf_counter() - t0) * 1000
 
-    # Three-way LIVE/SPOOF/UNCERTAIN, applied to the SMOOTHED probability
-    # (not the raw single-frame one) -- the gray-zone band was selected
-    # against a model that sees one still image at a time, and smoothing
-    # already reduces frame-to-frame noise the same way averaging multiple
-    # independent exposures would, so the band is applied after smoothing
-    # for a fair, stable UNCERTAIN decision rather than one that flickers
-    # with single-frame jitter.
+    t0 = time.perf_counter()
+    if use_smoothing:
+        _recent_probs.append(raw_prob_spoof)
+        smoothed_prob_spoof = sum(_recent_probs) / len(_recent_probs)
+        smoothing_window = len(_recent_probs)
+    else:
+        # A sample/demo image is a single independent exposure, not one
+        # frame of a continuing video stream -- averaging it with whatever
+        # happens to be in the live camera's smoothing window would be
+        # meaningless (and would corrupt that window for the camera tab).
+        smoothed_prob_spoof = raw_prob_spoof
+        smoothing_window = 1
+
     if GRAY_ZONE_BAND is not None:
         label = classify_three_way(smoothed_prob_spoof, *GRAY_ZONE_BAND, threshold=predictor.threshold)
     else:
@@ -490,13 +489,61 @@ def api_detect():
     else:  # UNCERTAIN: no class to be "confident" in -- show P(spoof) itself,
            # the number that actually put this frame in the gray zone.
         smoothed_confidence = smoothed_prob_spoof
+    timings["decision_ms"] = (time.perf_counter() - t0) * 1000
 
     raw_label = "SPOOF" if raw_prob_spoof >= predictor.threshold else "LIVE"
     raw_confidence = raw_prob_spoof if raw_label == "SPOOF" else 1.0 - raw_prob_spoof
+    message = "Hold still / improve lighting" if label == "UNCERTAIN" else None
+
+    return {
+        "face_detected": True,
+        "label": label,
+        "confidence": smoothed_confidence,
+        "message": message,
+        "raw_label": raw_label,
+        "raw_confidence": raw_confidence,
+        "smoothing_window": smoothing_window,
+        "bbox": {"x": best.x, "y": best.y, "width": best.width, "height": best.height},
+        "timings": timings,
+        "_crop": crop,  # internal use only (e.g. by callers building an Explain overlay too); stripped before jsonify
+        "_best": best,
+    }
+
+
+@app.route("/api/detect", methods=["POST"])
+def api_detect():
+    """
+    Accepts one JPEG frame (multipart form field 'frame'), runs the real
+    face_utils.FaceDetector + liveness_infer.LivenessPredictor on it, logs
+    the decision to the real CSV log (same AttendanceLogger the actual
+    realtime_pipeline.py script uses), and returns real results.
+    """
+    if "frame" not in request.files:
+        return jsonify({"error": "no frame uploaded"}), 400
+
+    t0 = time.perf_counter()
+    file_bytes = np.frombuffer(request.files["frame"].read(), dtype=np.uint8)
+    frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    decode_ms = (time.perf_counter() - t0) * 1000
+    if frame is None:
+        return jsonify({"error": "could not decode image"}), 400
+
+    global _last_logged_decision, _face_was_present
+
+    result = _run_pipeline_core(frame, decode_ms, use_smoothing=True)
+
+    if not result["face_detected"]:
+        # Face left the frame: reset smoothing so a freshly-reappearing
+        # face doesn't get averaged in with stale, unrelated probabilities.
+        _recent_probs.clear()
+        _face_was_present = False
+        return jsonify({"face_detected": False, "timings": result["timings"]})
+
+    best = result.pop("_best")
+    result.pop("_crop", None)
 
     timestamp = datetime.now().isoformat(timespec="seconds")
-    decision = {"LIVE": "LIVE_ACCEPTED", "SPOOF": "SPOOF_REJECTED", "UNCERTAIN": "UNCERTAIN"}[label]
-    message = "Hold still / improve lighting" if label == "UNCERTAIN" else None
+    decision = {"LIVE": "LIVE_ACCEPTED", "SPOOF": "SPOOF_REJECTED", "UNCERTAIN": "UNCERTAIN"}[result["label"]]
 
     # Log once per event (face newly appearing, or the smoothed decision
     # changing) instead of once per frame, so the decision log reflects
@@ -506,21 +553,12 @@ def api_detect():
     decision_changed = decision != _last_logged_decision
     face_newly_appeared = not _face_was_present
     if decision_changed or face_newly_appeared:
-        logger.log(decision, smoothed_confidence, best)
+        logger.log(decision, result["confidence"], best)
         _last_logged_decision = decision
     _face_was_present = True
 
-    return jsonify({
-        "face_detected": True,
-        "label": label,
-        "confidence": smoothed_confidence,
-        "message": message,
-        "raw_label": raw_label,
-        "raw_confidence": raw_confidence,
-        "smoothing_window": len(_recent_probs),
-        "bbox": {"x": best.x, "y": best.y, "width": best.width, "height": best.height},
-        "timestamp": timestamp,
-    })
+    result["timestamp"] = timestamp
+    return jsonify(result)
 
 
 # ---------------------------------------------------------------------------
@@ -567,18 +605,24 @@ def api_explain():
     if frame is None:
         return jsonify({"error": "could not decode image"}), 400
 
+    return jsonify(_explain_frame(frame))
+
+
+def _explain_frame(frame) -> dict:
+    """Shared core of /api/explain, also used by the sample-image demo
+    endpoints (TASK P) so both go through the exact same real pipeline."""
     detections = detector.detect(frame)
     if not detections:
-        return jsonify({"face_detected": False})
+        return {"face_detected": False}
 
     best = max(detections, key=lambda d: d.width * d.height)
     crop = crop_face(frame, best)
     if crop is None or crop.size == 0:
-        return jsonify({"face_detected": False})
+        return {"face_detected": False}
 
     getter = _GRADCAM_LAYER_GETTER.get(predictor.backbone)
     if getter is None:
-        return jsonify({"error": f"Grad-CAM not supported for backbone {predictor.backbone!r}"}), 501
+        return {"error": f"Grad-CAM not supported for backbone {predictor.backbone!r}"}
 
     pil_image = bgr_crop_to_pil(crop)
     tensor = predictor.transform(pil_image).unsqueeze(0).to(predictor.device)
@@ -591,13 +635,13 @@ def api_explain():
     overlay_bgr = overlay_heatmap(crop_resized, heatmap)
     ok, buf = cv2.imencode(".jpg", overlay_bgr)
     if not ok:
-        return jsonify({"error": "failed to encode overlay image"}), 500
+        return {"error": "failed to encode overlay image"}
     overlay_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
 
     label = "SPOOF" if prob_spoof >= predictor.threshold else "LIVE"
     confidence = prob_spoof if label == "SPOOF" else 1.0 - prob_spoof
 
-    return jsonify({
+    return {
         "face_detected": True,
         "label": label,
         "confidence": confidence,
@@ -605,7 +649,103 @@ def api_explain():
         "backbone": predictor.backbone,
         "overlay_image_base64": f"data:image/jpeg;base64,{overlay_b64}",
         "bbox": {"x": best.x, "y": best.y, "width": best.width, "height": best.height},
+    }
+
+
+# ---------------------------------------------------------------------------
+# TASK P: "Camera / Sample images" demo mode. Each sample is a REAL image
+# from the actual test set (or the masked-eval examples), picked to cover
+# one condition each; running one through detect/explain hits the exact
+# same code paths as a live webcam frame -- never a cached/precomputed
+# result -- so the numbers shown are always freshly computed.
+# ---------------------------------------------------------------------------
+_SAMPLE_IMAGES = {
+    "live": {
+        "path": os.path.join(PROJECT_ROOT, "data", "celeba_spoof", "test", "live", "test_10059_001096.png"),
+        "label": "Live", "description": "Genuine, unmasked",
+    },
+    "masked_live": {
+        "path": os.path.join(PROJECT_ROOT, "results", "masked", "examples", "01_white_live_test_7036_000466.png.png"),
+        "label": "Masked Live", "description": "Genuine, synthetic surgical mask overlay",
+    },
+    "photo": {
+        "path": os.path.join(PROJECT_ROOT, "data", "celeba_spoof", "test", "spoof", "test_5023_000033.png"),
+        "label": "Printed Photo", "description": "Printed-photo attack",
+    },
+    "phone": {
+        "path": os.path.join(PROJECT_ROOT, "data", "celeba_spoof", "test", "spoof", "test_9149_001134.png"),
+        "label": "Phone Replay", "description": "Photo displayed on a phone screen",
+    },
+    "pc_replay": {
+        "path": os.path.join(PROJECT_ROOT, "data", "celeba_spoof", "test", "spoof", "test_5223_001725.png"),
+        "label": "PC Replay", "description": "Photo displayed on a PC screen -- the weakest attack type measured",
+    },
+    "poster": {
+        "path": os.path.join(PROJECT_ROOT, "data", "celeba_spoof", "test", "spoof", "test_5520_000625.png"),
+        "label": "Poster", "description": "Poster attack",
+    },
+    "mask_3d": {
+        "path": os.path.join(PROJECT_ROOT, "data", "celeba_spoof", "test", "spoof", "test_10059_001051.png"),
+        "label": "3D Mask", "description": "Rigid 3D mask attack",
+    },
+    "known_failure": {
+        "path": os.path.join(PROJECT_ROOT, "data", "celeba_spoof", "test", "spoof", "test_5966_000293.png"),
+        "label": "Known Failure (PC replay)", "description": "A real PC-replay false accept from the v2 test run",
+    },
+}
+
+
+@app.route("/api/sample-images")
+def api_sample_images():
+    """Lists the curated demo-mode images (id, label, description only --
+    no file paths exposed)."""
+    return jsonify({
+        "images": [{"id": k, "label": v["label"], "description": v["description"]} for k, v in _SAMPLE_IMAGES.items()]
     })
+
+
+def _load_sample_frame(sample_id):
+    sample = _SAMPLE_IMAGES.get(sample_id)
+    if sample is None:
+        return None
+    return cv2.imread(sample["path"])
+
+
+@app.route("/api/sample-images/<sample_id>/detect", methods=["POST"])
+def api_sample_image_detect(sample_id):
+    """Runs the exact same real Detect->Crop->Classify->Decision pipeline
+    as /api/detect against a curated sample image instead of an uploaded
+    webcam frame. Deliberately NOT smoothed (use_smoothing=False) and
+    never logged -- a static demo image is one independent exposure, not
+    a frame in an ongoing video stream."""
+    if sample_id not in _SAMPLE_IMAGES:
+        return jsonify({"error": f"unknown sample id {sample_id!r}"}), 404
+
+    t0 = time.perf_counter()
+    frame = _load_sample_frame(sample_id)
+    decode_ms = (time.perf_counter() - t0) * 1000
+    if frame is None:
+        return jsonify({"error": "sample image file not found on disk"}), 500
+
+    result = _run_pipeline_core(frame, decode_ms, use_smoothing=False)
+    result.pop("_crop", None)
+    result.pop("_best", None)
+    result["timestamp"] = datetime.now().isoformat(timespec="seconds")
+    return jsonify(result)
+
+
+@app.route("/api/sample-images/<sample_id>/explain", methods=["POST"])
+def api_sample_image_explain(sample_id):
+    """Runs the exact same real Grad-CAM explain pipeline as /api/explain
+    against a curated sample image."""
+    if sample_id not in _SAMPLE_IMAGES:
+        return jsonify({"error": f"unknown sample id {sample_id!r}"}), 404
+
+    frame = _load_sample_frame(sample_id)
+    if frame is None:
+        return jsonify({"error": "sample image file not found on disk"}), 500
+
+    return jsonify(_explain_frame(frame))
 
 
 if __name__ == "__main__":

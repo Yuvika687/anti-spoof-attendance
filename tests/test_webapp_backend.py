@@ -153,6 +153,85 @@ class TestWebappBackendEndpoints(unittest.TestCase):
         import io
         return io.BytesIO(self._sample_frame())
 
+    # ---- TASK P: "Camera / Sample images" demo mode ----
+
+    def test_sample_images_list(self):
+        resp = self.client.get("/api/sample-images")
+        self.assertEqual(resp.status_code, 200)
+        images = resp.get_json()["images"]
+        self.assertEqual(len(images), 8)
+        ids = {img["id"] for img in images}
+        self.assertEqual(ids, {"live", "masked_live", "photo", "phone", "pc_replay",
+                                "poster", "mask_3d", "known_failure"})
+        for img in images:
+            self.assertIn("label", img)
+            self.assertIn("description", img)
+            self.assertNotIn("path", img)  # file paths must never be exposed
+
+    def test_sample_image_detect_runs_real_pipeline_with_timings(self):
+        resp = self.client.post("/api/sample-images/live/detect")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertTrue(data["face_detected"])
+        self.assertIn(data["label"], ("LIVE", "SPOOF", "UNCERTAIN"))
+        for stage in ("frame_ms", "detect_ms", "crop_ms", "classify_ms", "decision_ms"):
+            self.assertIn(stage, data["timings"])
+            self.assertGreaterEqual(data["timings"][stage], 0.0)
+        # A single demo image is never smoothed with unrelated frames.
+        self.assertEqual(data["smoothing_window"], 1)
+
+    def test_sample_image_detect_known_failure_is_the_documented_pc_replay_case(self):
+        # Regression test for a real double-crop bug found while building
+        # this: the sample images must be sourced from the RAW (uncropped)
+        # dataset, not data/celeba_spoof_cropped -- feeding an
+        # already-cropped image through detect+crop_face a second time
+        # silently zoomed in far more than intended and changed the
+        # prediction (0.4251 cached -> ~0.075 double-cropped). Pin the
+        # known-failure sample's raw_confidence close to its real,
+        # independently-verified cached value.
+        resp = self.client.post("/api/sample-images/known_failure/detect")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertTrue(data["face_detected"])
+        self.assertEqual(data["raw_label"], "LIVE")
+        self.assertAlmostEqual(data["raw_confidence"], 0.5749, delta=0.01)
+
+    def test_sample_image_explain_runs_real_gradcam(self):
+        resp = self.client.post("/api/sample-images/pc_replay/explain")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertTrue(data["face_detected"])
+        self.assertIn(data["label"], ("LIVE", "SPOOF"))
+        self.assertTrue(0.0 <= data["prob_spoof"] <= 1.0)
+        self.assertTrue(data["overlay_image_base64"].startswith("data:image/jpeg;base64,"))
+
+    def test_sample_image_unknown_id_returns_404(self):
+        resp = self.client.post("/api/sample-images/not_a_real_id/detect")
+        self.assertEqual(resp.status_code, 404)
+        resp2 = self.client.post("/api/sample-images/not_a_real_id/explain")
+        self.assertEqual(resp2.status_code, 404)
+
+    def test_sample_image_detect_does_not_disturb_camera_smoothing_state(self):
+        # Sample-mode calls must never pollute the live camera tab's
+        # ongoing smoothing window (TASK P: "Camera / Sample images" are
+        # two independent modes sharing one backend process).
+        app_module = self.app_module
+        app_module._recent_probs.clear()
+        app_module._face_was_present = False
+
+        detect_data_1 = {"frame": (self._sample_frame_io(), "frame.png")}
+        r1 = self.client.post("/api/detect", data=detect_data_1, content_type="multipart/form-data")
+        window_after_first = r1.get_json()["smoothing_window"]
+
+        self.client.post("/api/sample-images/photo/detect")
+        self.client.post("/api/sample-images/pc_replay/detect")
+
+        detect_data_2 = {"frame": (self._sample_frame_io(), "frame.png")}
+        r2 = self.client.post("/api/detect", data=detect_data_2, content_type="multipart/form-data")
+        window_after_second = r2.get_json()["smoothing_window"]
+
+        self.assertEqual(window_after_second, window_after_first + 1)
+
 
 if __name__ == "__main__":
     unittest.main()
