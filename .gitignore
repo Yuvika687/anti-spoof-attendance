@@ -39,6 +39,10 @@ results/plots/*
 !results/plots/.gitkeep
 results/gradcam/*
 !results/gradcam/.gitkeep
+results/crop_check/*
+!results/crop_check/.gitkeep
+results/v2_gradcam/*
+!results/v2_gradcam/.gitkeep
 
 # OS / editor
 .DS_Store
