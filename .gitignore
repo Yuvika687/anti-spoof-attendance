@@ -16,7 +16,10 @@ data/samples/masked/*
 !data/samples/masked/.gitkeep
 
 # Trained weights / downloaded models (regenerate via train.py, auto-downloaded by face_utils.py)
-models/*.pth
+# **/*.pth (not just models/*.pth) so this also covers the per-backbone
+# comparison checkpoints under models/<backbone>/ added by train.py's
+# auto-namespacing (models/*.pth alone doesn't match nested paths).
+models/**/*.pth
 models/*.onnx
 models/*.tflite
 
@@ -26,6 +29,14 @@ outputs/predictions/*
 !outputs/plots/.gitkeep
 !outputs/predictions/.gitkeep
 logs/*.csv
+
+# Breakdown/analysis results (regenerate via evaluate_breakdown.py etc.)
+# Mirrors the outputs/ pattern above -- NOT "results/*" with a nested
+# negation, which doesn't work: gitignore can't re-include a file inside
+# a directory entry that's already excluded by a broader rule.
+results/*.json
+results/plots/*
+!results/plots/.gitkeep
 
 # OS / editor
 .DS_Store
