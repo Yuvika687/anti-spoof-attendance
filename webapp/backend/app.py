@@ -306,6 +306,30 @@ def api_gradcam_image(filename):
     return send_file(full, mimetype="image/png")
 
 
+# v1's Grad-CAM gallery (generated in TASK D, before the v2 retrain) --
+# served alongside v2's for Page 3's "before/after" PC-replay comparison
+# (TASK P). Already includes 16 real PC-replay tiles, so nothing new
+# needed to be generated for this.
+_GRADCAM_V1_DIR = os.path.join(PROJECT_ROOT, "results", "gradcam")
+
+
+@app.route("/api/gradcam/v1/gallery")
+def api_gradcam_v1_gallery():
+    path = os.path.join(_GRADCAM_V1_DIR, "gallery.json")
+    if not os.path.isfile(path):
+        return jsonify({"error": "v1 gradcam gallery.json not found -- run generate_gradcam_gallery.py for v1 first"}), 404
+    with open(path) as f:
+        return jsonify(json.load(f))
+
+
+@app.route("/api/gradcam/v1/image/<path:filename>")
+def api_gradcam_v1_image(filename):
+    full = os.path.realpath(os.path.join(_GRADCAM_V1_DIR, filename))
+    if not full.startswith(os.path.realpath(_GRADCAM_V1_DIR) + os.sep) or not os.path.isfile(full):
+        return jsonify({"error": "not found"}), 404
+    return send_file(full, mimetype="image/png")
+
+
 _MASKED_EXAMPLES_DIR = os.path.join(PROJECT_ROOT, "results", "masked", "examples")
 _MASKED_FILENAME_RE = re.compile(r"^\d+_(white|light_blue|black)_(live|spoof)_(.+)$")
 
@@ -709,6 +733,16 @@ def _load_sample_frame(sample_id):
     if sample is None:
         return None
     return cv2.imread(sample["path"])
+
+
+@app.route("/api/sample-images/<sample_id>/image")
+def api_sample_image_file(sample_id):
+    """Serves the sample's own raw source image, so the UI can show what
+    was actually analyzed instead of a blank camera panel in sample mode."""
+    sample = _SAMPLE_IMAGES.get(sample_id)
+    if sample is None or not os.path.isfile(sample["path"]):
+        return jsonify({"error": "not found"}), 404
+    return send_file(sample["path"], mimetype="image/png")
 
 
 @app.route("/api/sample-images/<sample_id>/detect", methods=["POST"])
