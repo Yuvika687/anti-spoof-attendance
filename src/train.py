@@ -109,7 +109,7 @@ def main():
     parser.add_argument("--data_root", default=config.CELEBA_SPOOF_DIR,
                          help="Root folder containing train/ and val/ subfolders")
     parser.add_argument("--backbone", default=config.BACKBONE,
-                         choices=["mobilenet_v3_small", "efficientnet_b0"])
+                         choices=["mobilenet_v3_small", "efficientnet_b0", "resnet18"])
     parser.add_argument("--epochs", type=int, default=config.NUM_EPOCHS)
     parser.add_argument("--batch_size", type=int, default=config.BATCH_SIZE)
     parser.add_argument("--lr", type=float, default=config.LEARNING_RATE)
@@ -120,14 +120,32 @@ def main():
                          help="Number of initial epochs to train with a frozen backbone "
                               "(head-only warm-up) before full fine-tuning")
     parser.add_argument("--seed", type=int, default=config.RANDOM_SEED)
-    parser.add_argument("--out_dir", default=config.MODELS_DIR)
-    parser.add_argument("--plots_dir", default=config.PLOTS_DIR)
+    parser.add_argument("--out_dir", default=None,
+                         help="Checkpoint output dir. Default: models/ for the project's "
+                              "default backbone (mobilenet_v3_small), or models/<backbone>/ "
+                              "for any other backbone, so a comparison run can never "
+                              "overwrite the existing default checkpoint.")
+    parser.add_argument("--plots_dir", default=None,
+                         help="Plots/history output dir. Same backbone-namespacing default "
+                              "behavior as --out_dir.")
     parser.add_argument("--resume", default=None, help="Path to a checkpoint to resume from")
     args = parser.parse_args()
+
+    # Only the project's default backbone keeps writing to the original flat
+    # models/ and outputs/plots/ paths (so every other script that hardcodes
+    # config.BEST_MODEL_PATH etc. keeps working unchanged). Any other
+    # backbone is automatically namespaced into its own subdirectory, so a
+    # comparison run can never silently overwrite the default checkpoint.
+    is_default_backbone = args.backbone == config.BACKBONE
+    if args.out_dir is None:
+        args.out_dir = config.MODELS_DIR if is_default_backbone else os.path.join(config.MODELS_DIR, args.backbone)
+    if args.plots_dir is None:
+        args.plots_dir = config.PLOTS_DIR if is_default_backbone else os.path.join(config.PLOTS_DIR, args.backbone)
 
     set_seed(args.seed)
     os.makedirs(args.out_dir, exist_ok=True)
     os.makedirs(args.plots_dir, exist_ok=True)
+    print(f"Backbone: {args.backbone}  |  checkpoints -> {args.out_dir}  |  plots -> {args.plots_dir}")
 
     device = config.DEVICE
     print(f"Using device: {device}")

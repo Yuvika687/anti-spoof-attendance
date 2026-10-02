@@ -2,13 +2,17 @@
 model.py
 --------
 Defines the LivenessCNN: a binary Live-vs-Spoof classifier built on top of
-a pretrained lightweight backbone (MobileNetV3-Small or EfficientNet-B0).
+a pretrained backbone (mobilenet_v3_small, the project default; or
+efficientnet_b0 / resnet18 for comparison).
 
 Why these backbones?
-- Both are small enough to run in real time on a normal laptop CPU.
-- Both come with solid ImageNet pretrained weights in torchvision, so we
-  get useful low-level features (edges, texture, moire patterns caused by
-  screen replay, print artifacts) for free via transfer learning.
+- All three come with solid ImageNet pretrained weights in torchvision, so
+  we get useful low-level features (edges, texture, moire patterns caused
+  by screen replay, print artifacts) for free via transfer learning.
+- MobileNetV3-Small and EfficientNet-B0 are small enough to run in real
+  time on a normal laptop CPU/GPU; ResNet-18 is noticeably heavier
+  (roughly 2x slower per training batch on this project's benchmark) and
+  included here purely as a comparison point, not a deployment candidate.
 
 The classifier head outputs a single logit (not two). We treat this as the
 logit for the "SPOOF" class and train with BCEWithLogitsLoss, matching the
@@ -45,10 +49,18 @@ class LivenessCNN(nn.Module):
             self.feature_extractor = net
             self.feature_dim = in_features
 
+        elif backbone == "resnet18":
+            weights = tvm.ResNet18_Weights.DEFAULT if pretrained else None
+            net = tvm.resnet18(weights=weights)
+            in_features = net.fc.in_features  # 512
+            net.fc = nn.Identity()
+            self.feature_extractor = net
+            self.feature_dim = in_features
+
         else:
             raise ValueError(
                 f"Unsupported backbone '{backbone}'. "
-                f"Choose 'mobilenet_v3_small' or 'efficientnet_b0'."
+                f"Choose 'mobilenet_v3_small', 'efficientnet_b0', or 'resnet18'."
             )
 
         # Custom classification head for the binary liveness task.
