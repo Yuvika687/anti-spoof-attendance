@@ -128,10 +128,11 @@ async function loadDecisionLog() {
   }
   empty.style.display = "none";
   rows.innerHTML = data.entries.map(e => {
-    const isLive = e.decision === "LIVE_ACCEPTED";
+    const cls = e.decision === "LIVE_ACCEPTED" ? "live" : e.decision === "UNCERTAIN" ? "uncertain" : "spoof";
+    const text = e.decision === "LIVE_ACCEPTED" ? "LIVE" : e.decision === "UNCERTAIN" ? "UNCERTAIN" : "SPOOF";
     return `<tr>
       <td>${e.timestamp}</td>
-      <td><span class="badge ${isLive ? "live" : "spoof"}">${isLive ? "LIVE" : "SPOOF"}</span></td>
+      <td><span class="badge ${cls}">${text}</span></td>
       <td>${(parseFloat(e.confidence) * 100).toFixed(1)}%</td>
       <td>[${e.bbox_x}, ${e.bbox_y}, ${e.bbox_w}, ${e.bbox_h}]</td>
     </tr>`;
@@ -264,7 +265,7 @@ function drawBox(bbox, label) {
   const y = (bbox.y / vh) * 100;
   const w = (bbox.width / vw) * 100;
   const h = (bbox.height / vh) * 100;
-  const color = label === "LIVE" ? "#22C55E" : "#EF4444";
+  const color = label === "LIVE" ? "#22C55E" : label === "UNCERTAIN" ? "#F59E0B" : "#EF4444";
 
   const svgNS = "http://www.w3.org/2000/svg";
   const rect = document.createElementNS(svgNS, "rect");
@@ -296,20 +297,27 @@ function drawBox(bbox, label) {
   overlay.appendChild(text);
 }
 
+// Maps a three-way label ("LIVE"/"SPOOF"/"UNCERTAIN") to its CSS class
+// suffix, shared by every place that colors a badge/bar/status by label.
+function statusClass(lbl) {
+  if (lbl === "LIVE") return "live";
+  if (lbl === "UNCERTAIN") return "uncertain";
+  return "spoof";
+}
+
 function addFeedItem(result) {
   const feed = document.getElementById("live-feed");
   if (feed.querySelector(".empty-state")) feed.innerHTML = "";
-  const isLive = result.label === "LIVE";
   const item = document.createElement("div");
   item.className = "feed-item";
   const ts = new Date().toLocaleTimeString();
-  item.innerHTML = `<span class="ts">${ts}</span><span class="badge ${isLive ? "live" : "spoof"}">${result.label}</span><span class="conf">${(result.confidence*100).toFixed(1)}%</span>`;
+  item.innerHTML = `<span class="ts">${ts}</span><span class="badge ${statusClass(result.label)}">${result.label}</span><span class="conf">${(result.confidence*100).toFixed(1)}%</span>`;
   feed.insertBefore(item, feed.firstChild);
   while (feed.children.length > 8) feed.removeChild(feed.lastChild);
 }
 
 function updateStatsStrip(result) {
-  const cls = (lbl) => lbl === "LIVE" ? "live" : "spoof";
+  const cls = statusClass;
   if (!result || !result.face_detected) {
     document.getElementById("stat-raw").textContent = "—";
     document.getElementById("stat-smoothed").textContent = "—";
@@ -355,15 +363,18 @@ async function detectLoop() {
         document.getElementById("live-confidence-bar").className = "confidence-bar-fill none";
         drawBox(null);
       } else {
-        const isLive = result.label === "LIVE";
-        statusEl.innerHTML = `<span class="badge ${isLive ? "live" : "spoof"}">${isLive ? "LIVE" : "SPOOF - REJECTED"}</span>`;
+        const cls = statusClass(result.label);
+        const badgeText = result.label === "LIVE" ? "LIVE"
+          : result.label === "UNCERTAIN" ? "UNCERTAIN - Hold still / improve lighting"
+          : "SPOOF - REJECTED";
+        statusEl.innerHTML = `<span class="badge ${cls}">${badgeText}</span>`;
         const statusText = document.getElementById("live-status");
         statusText.textContent = result.label;
-        statusText.className = "v status-text " + (isLive ? "live" : "spoof");
+        statusText.className = "v status-text " + cls;
         document.getElementById("live-confidence").textContent = (result.confidence*100).toFixed(1) + "%";
         const bar = document.getElementById("live-confidence-bar");
         bar.style.width = (result.confidence*100).toFixed(1) + "%";
-        bar.className = "confidence-bar-fill " + (isLive ? "live" : "spoof");
+        bar.className = "confidence-bar-fill " + cls;
         drawBox(result.bbox, result.label);
 
         // Only add a feed entry when the backend actually logged this as

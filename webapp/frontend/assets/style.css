@@ -115,6 +115,7 @@ nav button.active{color:var(--cyan);background:var(--surface-1)}
 .badge.live{background:rgba(34,197,94,0.14);color:var(--green);border:1px solid rgba(34,197,94,0.35)}
 .badge.spoof{background:rgba(239,68,68,0.14);color:var(--red);border:1px solid rgba(239,68,68,0.35)}
 .badge.none{background:rgba(245,158,11,0.14);color:var(--orange);border:1px solid rgba(245,158,11,0.35)}
+.badge.uncertain{background:rgba(245,158,11,0.14);color:var(--orange);border:1px solid rgba(245,158,11,0.35)}
 
 /* ---------- live detection ---------- */
 .detect-layout{display:grid;grid-template-columns:1.5fr 1fr;gap:18px}
@@ -160,10 +161,12 @@ nav button.active{color:var(--cyan);background:var(--surface-1)}
 .confidence-bar-fill{height:100%;transition:width .15s ease,background .15s ease}
 .confidence-bar-fill.live{background:var(--green)}
 .confidence-bar-fill.spoof{background:var(--red)}
+.confidence-bar-fill.uncertain{background:var(--orange)}
 .confidence-bar-fill.none{background:var(--text-muted)}
 
 .status-text.live{color:var(--green)}
 .status-text.spoof{color:var(--red)}
+.status-text.uncertain{color:var(--orange)}
 .status-text.none{color:var(--orange)}
 
 .stat-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)}

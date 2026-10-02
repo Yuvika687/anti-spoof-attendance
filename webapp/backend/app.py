@@ -28,7 +28,7 @@ sys.path.insert(0, SRC_DIR)
 
 import config  # noqa: E402
 from face_utils import FaceDetector, crop_face  # noqa: E402
-from liveness_infer import LivenessPredictor  # noqa: E402
+from liveness_infer import LivenessPredictor, classify_three_way, load_gray_zone_band  # noqa: E402
 from realtime_pipeline import AttendanceLogger  # noqa: E402
 
 import cv2  # noqa: E402
@@ -39,11 +39,27 @@ FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 
 # --- real model components, loaded once at startup ---
-print("Loading real face detector and liveness model...")
+# config.ACTIVE_MODEL_PATH defaults to v2 (face-crop-trained, see TASK G);
+# set the LIVENESS_MODEL_VERSION=v1 env var before starting this process to
+# run the original raw-frame-trained model instead, for comparison.
+print(f"Loading real face detector and liveness model (version={config.MODEL_VERSION})...")
 detector = FaceDetector()
-predictor = LivenessPredictor(checkpoint_path=config.BEST_MODEL_PATH)
+predictor = LivenessPredictor(checkpoint_path=config.ACTIVE_MODEL_PATH)
 logger = AttendanceLogger()
 print(f"Model loaded: backbone={predictor.backbone}, threshold={predictor.threshold}")
+
+# Three-way LIVE/SPOOF/UNCERTAIN band, loaded from evaluate_gray_zone.py's
+# real results JSON for the active model version -- never hardcoded, so
+# re-running that script and restarting this process is all it takes to
+# update the live band. If the results JSON doesn't exist yet, the
+# three-way decision is disabled (every frame is a plain LIVE/SPOOF
+# decision) rather than crashing the server.
+try:
+    GRAY_ZONE_BAND = load_gray_zone_band()
+    print(f"Gray-zone band loaded for {config.MODEL_VERSION}: {GRAY_ZONE_BAND}")
+except FileNotFoundError as e:
+    GRAY_ZONE_BAND = None
+    print(f"WARNING: {e} -- three-way UNCERTAIN decision disabled, falling back to plain LIVE/SPOOF.")
 
 # in-memory copy of the real test-set predictions, used to compute real
 # APCER/BPCER/HTER at any threshold the user picks, without re-running the
@@ -208,6 +224,8 @@ def api_model_info():
         "device": str(predictor.device),
         "detector": "MediaPipe BlazeFace (short-range)",
         "current_threshold": predictor.threshold,
+        "model_version": config.MODEL_VERSION,
+        "gray_zone_band": GRAY_ZONE_BAND,  # null if not loaded (three-way decision disabled)
     })
 
 
@@ -232,7 +250,7 @@ def api_model_info():
 # ---------------------------------------------------------------------------
 SMOOTHING_WINDOW = 5
 _recent_probs = deque(maxlen=SMOOTHING_WINDOW)
-_last_logged_decision = None  # None, "LIVE_ACCEPTED", or "SPOOF_REJECTED"
+_last_logged_decision = None  # None, "LIVE_ACCEPTED", "SPOOF_REJECTED", or "UNCERTAIN"
 _face_was_present = False
 
 
@@ -309,23 +327,38 @@ def api_detect():
     _recent_probs.append(raw_prob_spoof)
     smoothed_prob_spoof = sum(_recent_probs) / len(_recent_probs)
 
-    if smoothed_prob_spoof >= predictor.threshold:
-        label = "SPOOF"
-        smoothed_confidence = smoothed_prob_spoof
+    # Three-way LIVE/SPOOF/UNCERTAIN, applied to the SMOOTHED probability
+    # (not the raw single-frame one) -- the gray-zone band was selected
+    # against a model that sees one still image at a time, and smoothing
+    # already reduces frame-to-frame noise the same way averaging multiple
+    # independent exposures would, so the band is applied after smoothing
+    # for a fair, stable UNCERTAIN decision rather than one that flickers
+    # with single-frame jitter.
+    if GRAY_ZONE_BAND is not None:
+        label = classify_three_way(smoothed_prob_spoof, *GRAY_ZONE_BAND, threshold=predictor.threshold)
     else:
-        label = "LIVE"
+        label = "SPOOF" if smoothed_prob_spoof >= predictor.threshold else "LIVE"
+
+    if label == "SPOOF":
+        smoothed_confidence = smoothed_prob_spoof
+    elif label == "LIVE":
         smoothed_confidence = 1.0 - smoothed_prob_spoof
+    else:  # UNCERTAIN: no class to be "confident" in -- show P(spoof) itself,
+           # the number that actually put this frame in the gray zone.
+        smoothed_confidence = smoothed_prob_spoof
 
     raw_label = "SPOOF" if raw_prob_spoof >= predictor.threshold else "LIVE"
     raw_confidence = raw_prob_spoof if raw_label == "SPOOF" else 1.0 - raw_prob_spoof
 
     timestamp = datetime.now().isoformat(timespec="seconds")
-    decision = "LIVE_ACCEPTED" if label == "LIVE" else "SPOOF_REJECTED"
+    decision = {"LIVE": "LIVE_ACCEPTED", "SPOOF": "SPOOF_REJECTED", "UNCERTAIN": "UNCERTAIN"}[label]
+    message = "Hold still / improve lighting" if label == "UNCERTAIN" else None
 
     # Log once per event (face newly appearing, or the smoothed decision
     # changing) instead of once per frame, so the decision log reflects
     # real events rather than flooding with ~15-20 near-duplicate rows
-    # per second.
+    # per second. UNCERTAIN events are logged the same way as LIVE/SPOOF
+    # ones, not dropped.
     decision_changed = decision != _last_logged_decision
     face_newly_appeared = not _face_was_present
     if decision_changed or face_newly_appeared:
@@ -337,6 +370,7 @@ def api_detect():
         "face_detected": True,
         "label": label,
         "confidence": smoothed_confidence,
+        "message": message,
         "raw_label": raw_label,
         "raw_confidence": raw_confidence,
         "smoothing_window": len(_recent_probs),

@@ -24,6 +24,48 @@ BEST_MODEL_PATH = os.path.join(MODELS_DIR, "best_liveness.pth")
 LAST_MODEL_PATH = os.path.join(MODELS_DIR, "last_liveness.pth")
 ONNX_MODEL_PATH = os.path.join(MODELS_DIR, "liveness.onnx")
 
+# ---------------------------------------------------------------------------
+# Model version selection (TASK G/H)
+#
+# "v1" = BEST_MODEL_PATH, trained on raw full CelebA-Spoof frames (the
+#        original, mismatched setup -- never saw a face crop in training).
+# "v2" = trained on face crops built by build_face_cropped_dataset.py,
+#        matching what the live deployment pipeline actually feeds the
+#        model. v2 is the default for realtime_pipeline.py and
+#        webapp/backend/app.py; v1 stays selectable (for comparison only)
+#        via the LIVENESS_MODEL_VERSION env var, never silently.
+# ---------------------------------------------------------------------------
+MODEL_VERSION = os.environ.get("LIVENESS_MODEL_VERSION", "v2")
+
+V1_MODEL_PATH = BEST_MODEL_PATH
+V2_MODEL_PATH = os.path.join(MODELS_DIR, "v2_cropped", "best_liveness.pth")
+MODEL_PATHS_BY_VERSION = {"v1": V1_MODEL_PATH, "v2": V2_MODEL_PATH}
+
+# Gray-zone band JSON produced by evaluate_gray_zone.py for each version
+# (band selected on validation only -- see that script). v1's predates
+# TASK G and used the raw-frame model; v2's is the one actually used live.
+GRAY_ZONE_PATH_BY_VERSION = {
+    "v1": os.path.join(PROJECT_ROOT, "results", "gray_zone.json"),
+    "v2": os.path.join(PROJECT_ROOT, "results", "gray_zone_v2.json"),
+}
+
+
+def get_active_model_path(version: str = None) -> str:
+    version = version or MODEL_VERSION
+    if version not in MODEL_PATHS_BY_VERSION:
+        raise ValueError(f"Unknown model version {version!r}, expected one of {list(MODEL_PATHS_BY_VERSION)}")
+    return MODEL_PATHS_BY_VERSION[version]
+
+
+def get_gray_zone_path(version: str = None) -> str:
+    version = version or MODEL_VERSION
+    if version not in GRAY_ZONE_PATH_BY_VERSION:
+        raise ValueError(f"Unknown model version {version!r}, expected one of {list(GRAY_ZONE_PATH_BY_VERSION)}")
+    return GRAY_ZONE_PATH_BY_VERSION[version]
+
+
+ACTIVE_MODEL_PATH = get_active_model_path()  # resolved once at import time, from LIVENESS_MODEL_VERSION
+
 OUTPUTS_DIR = os.path.join(PROJECT_ROOT, "outputs")
 PLOTS_DIR = os.path.join(OUTPUTS_DIR, "plots")
 PREDICTIONS_DIR = os.path.join(OUTPUTS_DIR, "predictions")

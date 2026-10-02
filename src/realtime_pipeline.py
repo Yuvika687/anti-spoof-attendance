@@ -22,9 +22,10 @@ INTEGRATION POINT FOR YOUR PARTNER:
             attendance_db.log(identity, frame_timestamp)
 
 Usage:
-    python realtime_pipeline.py --checkpoint ../models/best_liveness.pth
+    python realtime_pipeline.py                      # uses config.ACTIVE_MODEL_PATH (v2 by default)
     python realtime_pipeline.py --checkpoint ../models/best_liveness.pth --threshold 0.6 --camera 0
-    python realtime_pipeline.py --save_samples   # also saves accepted/rejected crops to outputs/predictions
+    python realtime_pipeline.py --save_samples        # also saves accepted/rejected crops to outputs/predictions
+    LIVENESS_MODEL_VERSION=v1 python realtime_pipeline.py   # explicitly run the v1 (raw-frame-trained) model instead
 """
 
 import argparse
@@ -66,7 +67,11 @@ class AttendanceLogger:
     def __init__(self, log_path: str = config.ATTENDANCE_LOG_PATH):
         self.log_path = log_path
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        is_new = not os.path.exists(log_path)
+        # "not os.path.exists" alone misses a file that exists but is empty
+        # (e.g. truncated some other way) -- that case needs a header
+        # written too, or every row downstream gets silently misread as a
+        # header by csv.DictReader (found via a real empty-file case).
+        is_new = not os.path.exists(log_path) or os.path.getsize(log_path) == 0
         self._file = open(log_path, "a", newline="")
         self._writer = csv.writer(self._file)
         if is_new:
@@ -183,7 +188,10 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Real-time mask-aware liveness/anti-spoofing pipeline")
-    parser.add_argument("--checkpoint", default=config.BEST_MODEL_PATH)
+    parser.add_argument("--checkpoint", default=config.ACTIVE_MODEL_PATH,
+                         help="Defaults to config.ACTIVE_MODEL_PATH (v2, face-crop-trained; set "
+                              "LIVENESS_MODEL_VERSION=v1 to default to v1 instead, or pass an "
+                              "explicit path here to override either).")
     parser.add_argument("--threshold", type=float, default=config.DECISION_THRESHOLD,
                          help="Decision threshold on P(spoof); higher = stricter on spoof detection")
     parser.add_argument("--camera", type=int, default=0, help="Webcam device index")
