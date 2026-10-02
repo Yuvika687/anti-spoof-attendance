@@ -15,6 +15,7 @@ import csv
 import io
 import json
 import os
+import re
 import sys
 from collections import deque
 from datetime import datetime
@@ -26,8 +27,11 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 SRC_DIR = os.path.join(PROJECT_ROOT, "src")
 sys.path.insert(0, SRC_DIR)
 
+import base64  # noqa: E402
+
 import config  # noqa: E402
-from face_utils import FaceDetector, crop_face  # noqa: E402
+from face_utils import FaceDetector, bgr_crop_to_pil, crop_face  # noqa: E402
+from gradcam import GradCAM, overlay_heatmap  # noqa: E402
 from liveness_infer import LivenessPredictor, classify_three_way, load_gray_zone_band  # noqa: E402
 from realtime_pipeline import AttendanceLogger  # noqa: E402
 
@@ -61,11 +65,24 @@ except FileNotFoundError as e:
     GRAY_ZONE_BAND = None
     print(f"WARNING: {e} -- three-way UNCERTAIN decision disabled, falling back to plain LIVE/SPOOF.")
 
+def _active_model_path(v2_relpath, v1_relpath):
+    """Resolves to the ACTIVE model's (config.MODEL_VERSION) own result
+    file, falling back to the original v1-era path when running v1 for
+    comparison. Centralizes the v2/v1 branch used by every endpoint below
+    so the backend never serves a v1-era result while v2 is active (TASK N)."""
+    relpath = v2_relpath if config.MODEL_VERSION == "v2" else v1_relpath
+    return os.path.join(PROJECT_ROOT, *relpath)
+
+
 # in-memory copy of the real test-set predictions, used to compute real
 # APCER/BPCER/HTER at any threshold the user picks, without re-running the
 # model -- this is a genuine recomputation from stored real probabilities,
-# not an interpolation or invented curve.
-_PREDICTIONS_CSV = os.path.join(PROJECT_ROOT, "outputs", "predictions", "predictions_test.csv")
+# not an interpolation or invented curve. Points at the ACTIVE model's own
+# predictions (see _active_model_path).
+_PREDICTIONS_CSV = _active_model_path(
+    ("outputs", "predictions", "v2_cropped", "predictions_v2_cropped_test.csv"),
+    ("outputs", "predictions", "predictions_test.csv"),
+)
 _true_labels = []
 _pred_probs = []
 if os.path.isfile(_PREDICTIONS_CSV):
@@ -124,18 +141,28 @@ def index():
 # ---------------------------------------------------------------------------
 @app.route("/api/metrics")
 def api_metrics():
-    """Real final test-set metrics from evaluate.py's actual output."""
-    path = os.path.join(PROJECT_ROOT, "outputs", "predictions", "metrics_test.json")
+    """Real final test-set metrics for the ACTIVE model (v2 by default)
+    from evaluate.py's actual output. NOT the v1-era
+    outputs/predictions/metrics_test.json, which this backend never reads
+    while v2 is active (TASK N)."""
+    path = _active_model_path(
+        ("outputs", "predictions", "v2_cropped", "metrics_v2_cropped_test.json"),
+        ("outputs", "predictions", "metrics_test.json"),
+    )
     if not os.path.isfile(path):
-        return jsonify({"error": "metrics_test.json not found -- run evaluate.py first"}), 404
+        return jsonify({"error": f"{os.path.basename(path)} not found -- run evaluate.py first"}), 404
     with open(path) as f:
         return jsonify(json.load(f))
 
 
 @app.route("/api/training-history")
 def api_training_history():
-    """Real per-epoch train/val loss and accuracy from train.py's actual run."""
-    path = os.path.join(PROJECT_ROOT, "outputs", "plots", "training_history.json")
+    """Real per-epoch train/val loss and accuracy for the ACTIVE model's
+    actual training run (TASK N: not the stale v1-era path)."""
+    path = _active_model_path(
+        ("outputs", "plots", "v2_cropped", "training_history.json"),
+        ("outputs", "plots", "training_history.json"),
+    )
     if not os.path.isfile(path):
         return jsonify({"error": "training_history.json not found -- run train.py first"}), 404
     with open(path) as f:
@@ -144,7 +171,10 @@ def api_training_history():
 
 @app.route("/api/plots/training-curves.png")
 def api_plot_training_curves():
-    path = os.path.join(PROJECT_ROOT, "outputs", "plots", "training_curves.png")
+    path = _active_model_path(
+        ("outputs", "plots", "v2_cropped", "training_curves.png"),
+        ("outputs", "plots", "training_curves.png"),
+    )
     if not os.path.isfile(path):
         return jsonify({"error": "not found"}), 404
     return send_file(path, mimetype="image/png")
@@ -152,7 +182,10 @@ def api_plot_training_curves():
 
 @app.route("/api/plots/confusion-matrix.png")
 def api_plot_confusion_matrix():
-    path = os.path.join(PROJECT_ROOT, "outputs", "plots", "confusion_matrix_test.png")
+    path = _active_model_path(
+        ("outputs", "plots", "v2_cropped", "confusion_matrix_v2_cropped_test.png"),
+        ("outputs", "plots", "confusion_matrix_test.png"),
+    )
     if not os.path.isfile(path):
         return jsonify({"error": "not found"}), 404
     return send_file(path, mimetype="image/png")
@@ -227,6 +260,117 @@ def api_model_info():
         "model_version": config.MODEL_VERSION,
         "gray_zone_band": GRAY_ZONE_BAND,  # null if not loaded (three-way decision disabled)
     })
+
+
+# ---------------------------------------------------------------------------
+# TASK N: data API for the rebuilt frontend -- every number/image the new
+# UI needs, served from the real result files these scripts already
+# produce (summary.json, the v2 Grad-CAM gallery, masked-eval examples,
+# and the remaining result plot PNGs), so the UI itself can be pure
+# frontend work with no new backend logic needed per page.
+# ---------------------------------------------------------------------------
+@app.route("/api/summary")
+def api_summary():
+    """Serves results/summary.json -- the single source of truth built by
+    build_summary.py (TASK K). Every number the dashboard shows should
+    come from here, not be recomputed ad hoc in the frontend."""
+    path = os.path.join(PROJECT_ROOT, "results", "summary.json")
+    if not os.path.isfile(path):
+        return jsonify({"error": "summary.json not found -- run build_summary.py first"}), 404
+    with open(path) as f:
+        return jsonify(json.load(f))
+
+
+_GRADCAM_DIR = os.path.join(PROJECT_ROOT, "results", "v2_gradcam")
+
+
+@app.route("/api/gradcam/gallery")
+def api_gradcam_gallery():
+    """Index of the v2 Grad-CAM gallery (generate_gradcam_gallery.py) --
+    file, true/predicted label, spoof type, probability, category per
+    tile. Images themselves are served by /api/gradcam/image/<file>."""
+    path = os.path.join(_GRADCAM_DIR, "gallery.json")
+    if not os.path.isfile(path):
+        return jsonify({"error": "v2 gradcam gallery.json not found -- run generate_gradcam_gallery.py for v2 first"}), 404
+    with open(path) as f:
+        return jsonify(json.load(f))
+
+
+@app.route("/api/gradcam/image/<path:filename>")
+def api_gradcam_image(filename):
+    """Serves one gallery tile by filename (as listed in /api/gradcam/gallery)."""
+    full = os.path.realpath(os.path.join(_GRADCAM_DIR, filename))
+    if not full.startswith(os.path.realpath(_GRADCAM_DIR) + os.sep) or not os.path.isfile(full):
+        return jsonify({"error": "not found"}), 404
+    return send_file(full, mimetype="image/png")
+
+
+_MASKED_EXAMPLES_DIR = os.path.join(PROJECT_ROOT, "results", "masked", "examples")
+_MASKED_FILENAME_RE = re.compile(r"^\d+_(white|light_blue|black)_(live|spoof)_(.+)$")
+
+
+@app.route("/api/masked/examples")
+def api_masked_examples():
+    """Lists the synthetic masked-face examples (evaluate_masked.py,
+    TASK I) -- color and true label are parsed back out of each filename
+    (there's no separate index JSON for these, unlike the Grad-CAM
+    gallery). Images themselves are served by /api/masked/image/<file>."""
+    if not os.path.isdir(_MASKED_EXAMPLES_DIR):
+        return jsonify({"examples": []})
+
+    examples = []
+    for fname in sorted(os.listdir(_MASKED_EXAMPLES_DIR)):
+        if fname == ".gitkeep" or not fname.lower().endswith((".png", ".jpg", ".jpeg")):
+            continue
+        m = _MASKED_FILENAME_RE.match(fname)
+        examples.append({
+            "file": fname,
+            "color": m.group(1) if m else None,
+            "true_label": m.group(2) if m else None,
+            "source_file": m.group(3) if m else None,
+        })
+    return jsonify({"examples": examples})
+
+
+@app.route("/api/masked/image/<path:filename>")
+def api_masked_image(filename):
+    """Serves one masked-face example image by filename."""
+    full = os.path.realpath(os.path.join(_MASKED_EXAMPLES_DIR, filename))
+    if not full.startswith(os.path.realpath(_MASKED_EXAMPLES_DIR) + os.sep) or not os.path.isfile(full):
+        return jsonify({"error": "not found"}), 404
+    return send_file(full, mimetype="image/png")
+
+
+@app.route("/api/plots/breakdown-spoof-type.png")
+def api_plot_breakdown_spoof_type():
+    path = os.path.join(PROJECT_ROOT, "results", "plots", "v2", "breakdown_spoof_type.png")
+    if not os.path.isfile(path):
+        return jsonify({"error": "not found"}), 404
+    return send_file(path, mimetype="image/png")
+
+
+@app.route("/api/plots/breakdown-illumination.png")
+def api_plot_breakdown_illumination():
+    path = os.path.join(PROJECT_ROOT, "results", "plots", "v2", "breakdown_illumination.png")
+    if not os.path.isfile(path):
+        return jsonify({"error": "not found"}), 404
+    return send_file(path, mimetype="image/png")
+
+
+@app.route("/api/plots/breakdown-environment.png")
+def api_plot_breakdown_environment():
+    path = os.path.join(PROJECT_ROOT, "results", "plots", "v2", "breakdown_environment.png")
+    if not os.path.isfile(path):
+        return jsonify({"error": "not found"}), 404
+    return send_file(path, mimetype="image/png")
+
+
+@app.route("/api/plots/gray-zone-curve.png")
+def api_plot_gray_zone_curve():
+    path = os.path.join(PROJECT_ROOT, "results", "plots", "v2", "gray_zone_coverage_vs_error.png")
+    if not os.path.isfile(path):
+        return jsonify({"error": "not found"}), 404
+    return send_file(path, mimetype="image/png")
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +520,91 @@ def api_detect():
         "smoothing_window": len(_recent_probs),
         "bbox": {"x": best.x, "y": best.y, "width": best.width, "height": best.height},
         "timestamp": timestamp,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Grad-CAM "Explain this frame" (TASK M) -- on-demand only, never on every
+# frame (Grad-CAM is ~20-90ms depending on backbone, measured in
+# benchmark_backbones.py / the earlier Grad-CAM investigation -- too slow to
+# run per-frame in the live loop, but fine for a single user-triggered call).
+# ---------------------------------------------------------------------------
+# Last-conv-block getter per backbone, same choice already used by
+# generate_gradcam_gallery.py (mobilenet_v3_small) and benchmark_backbones.py
+# (all three) -- verified there by checking the real activation shape before
+# trusting it.
+_GRADCAM_LAYER_GETTER = {
+    "mobilenet_v3_small": lambda m: m.feature_extractor.features[-1],
+    "resnet18": lambda m: m.feature_extractor.layer4[-1],
+    "efficientnet_b0": lambda m: m.feature_extractor.features[-1],
+}
+
+
+@app.route("/api/explain", methods=["POST"])
+def api_explain():
+    """
+    Accepts one JPEG frame (multipart form field 'frame', same as
+    /api/detect), runs the real deployment crop (BlazeFace + crop_face)
+    and a single on-demand Grad-CAM pass on the ACTIVE model, and returns
+    the heatmap overlay as a base64 JPEG plus the prediction/probability
+    for that single frame.
+
+    Deliberately independent of /api/detect's global smoothing state
+    (_recent_probs / _last_logged_decision / _face_was_present) and of the
+    decision log -- this is a one-off "explain this frame" action, not a
+    live-loop event, and must never shift or reset the ongoing smoothing
+    window or get logged as a LIVE/SPOOF/UNCERTAIN decision. GradCAM's own
+    hook lifecycle (register per call, remove in __exit__) already
+    guarantees predictor.model is left exactly as it was found -- same
+    model instance /api/detect uses next, unmodified -- verified by
+    tests/test_gradcam.py's test_model_parameters_unchanged_after_call.
+    """
+    if "frame" not in request.files:
+        return jsonify({"error": "no frame uploaded"}), 400
+
+    file_bytes = np.frombuffer(request.files["frame"].read(), dtype=np.uint8)
+    frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    if frame is None:
+        return jsonify({"error": "could not decode image"}), 400
+
+    detections = detector.detect(frame)
+    if not detections:
+        return jsonify({"face_detected": False})
+
+    best = max(detections, key=lambda d: d.width * d.height)
+    crop = crop_face(frame, best)
+    if crop is None or crop.size == 0:
+        return jsonify({"face_detected": False})
+
+    getter = _GRADCAM_LAYER_GETTER.get(predictor.backbone)
+    if getter is None:
+        return jsonify({"error": f"Grad-CAM not supported for backbone {predictor.backbone!r}"}), 501
+
+    pil_image = bgr_crop_to_pil(crop)
+    tensor = predictor.transform(pil_image).unsqueeze(0).to(predictor.device)
+
+    target_layer = getter(predictor.model)
+    with GradCAM(predictor.model, target_layer) as cam:
+        heatmap, prob_spoof = cam(tensor, target="predicted")
+
+    crop_resized = cv2.resize(crop, (predictor.image_size, predictor.image_size))
+    overlay_bgr = overlay_heatmap(crop_resized, heatmap)
+    ok, buf = cv2.imencode(".jpg", overlay_bgr)
+    if not ok:
+        return jsonify({"error": "failed to encode overlay image"}), 500
+    overlay_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+
+    label = "SPOOF" if prob_spoof >= predictor.threshold else "LIVE"
+    confidence = prob_spoof if label == "SPOOF" else 1.0 - prob_spoof
+
+    return jsonify({
+        "face_detected": True,
+        "label": label,
+        "confidence": confidence,
+        "prob_spoof": prob_spoof,
+        "backbone": predictor.backbone,
+        "overlay_image_base64": f"data:image/jpeg;base64,{overlay_b64}",
+        "bbox": {"x": best.x, "y": best.y, "width": best.width, "height": best.height},
     })
 
 

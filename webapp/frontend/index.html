@@ -130,6 +130,16 @@
           <div class="stat-row"><span class="k">Threshold</span><span class="v" id="live-threshold">&mdash;</span></div>
         </div>
         <div class="card">
+          <h3>Explain</h3>
+          <div class="card-sub">Grad-CAM on one frozen frame &mdash; too slow (~20-90ms) to run every frame live, so it's on demand only.</div>
+          <button id="explain-btn">Explain this frame</button>
+          <div id="explain-result" style="display:none;margin-top:10px">
+            <img id="explain-overlay" style="width:100%;border-radius:6px;display:block" />
+            <div class="stat-row" style="margin-top:8px"><span class="k">Prediction</span><span class="v" id="explain-label">&mdash;</span></div>
+            <div class="stat-row"><span class="k">P(spoof)</span><span class="v" id="explain-prob">&mdash;</span></div>
+          </div>
+        </div>
+        <div class="card">
           <h3>Recent Decisions</h3>
           <div class="card-sub">One entry per event (face appears / decision changes) &mdash; not per frame</div>
           <div id="live-feed"><div class="empty-state">No decisions yet this session.</div></div>

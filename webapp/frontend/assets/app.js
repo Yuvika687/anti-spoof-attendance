@@ -208,6 +208,53 @@ let mediaStream = null;
 document.getElementById("cam-start-btn").addEventListener("click", startLiveDetection);
 document.getElementById("cam-stop-btn").addEventListener("click", stopLiveDetection);
 
+// TASK M: on-demand Grad-CAM "Explain this frame" -- independent of the
+// live detect loop's smoothing state; just grabs whatever the camera is
+// showing right now and asks the backend to analyze that one frame.
+document.getElementById("explain-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("explain-btn");
+  if (!video.videoWidth) {
+    alert("Start the camera first.");
+    return;
+  }
+  btn.disabled = true;
+  const prevText = btn.textContent;
+  btn.textContent = "Analyzing...";
+
+  const snapCanvas = document.createElement("canvas");
+  snapCanvas.width = video.videoWidth;
+  snapCanvas.height = video.videoHeight;
+  snapCanvas.getContext("2d").drawImage(video, 0, 0, snapCanvas.width, snapCanvas.height);
+
+  snapCanvas.toBlob(async (blob) => {
+    const form = new FormData();
+    form.append("frame", blob, "frame.jpg");
+    try {
+      const res = await fetch(API + "/api/explain", { method: "POST", body: form });
+      const result = await res.json();
+      const panel = document.getElementById("explain-result");
+
+      if (!result.face_detected) {
+        panel.style.display = "none";
+        alert("No face detected in this frame.");
+      } else if (result.error) {
+        panel.style.display = "none";
+        alert("Explain failed: " + result.error);
+      } else {
+        document.getElementById("explain-overlay").src = result.overlay_image_base64;
+        document.getElementById("explain-label").textContent = result.label;
+        document.getElementById("explain-label").className = "v " + statusClass(result.label);
+        document.getElementById("explain-prob").textContent = (result.prob_spoof * 100).toFixed(1) + "%";
+        panel.style.display = "block";
+      }
+    } catch (err) {
+      alert("Explain request failed: " + err);
+    }
+    btn.disabled = false;
+    btn.textContent = prevText;
+  }, "image/jpeg");
+});
+
 async function startLiveDetection() {
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });

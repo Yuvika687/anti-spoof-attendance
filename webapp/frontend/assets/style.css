@@ -139,6 +139,14 @@ nav button.active{color:var(--cyan);background:var(--surface-1)}
 }
 .cam-stop button:hover{border-color:var(--red);color:var(--red)}
 
+/* TASK M: minimal only -- this gets a real design pass with the UI rebuild */
+#explain-btn{
+  background:var(--surface-2);color:var(--text);border:1px solid var(--border);
+  font-weight:600;font-size:13px;padding:9px 16px;border-radius:6px;cursor:pointer;width:100%;
+}
+#explain-btn:hover{border-color:var(--cyan);color:var(--cyan)}
+#explain-btn:disabled{opacity:0.6;cursor:default}
+
 /* scanner corner brackets -- purely decorative, not detection data */
 .scanner-corners span{position:absolute;width:22px;height:22px;border:2px solid rgba(34,211,238,0.5);z-index:4;pointer-events:none}
 .scanner-corners span:nth-child(1){top:10px;left:10px;border-right:none;border-bottom:none}
