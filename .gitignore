@@ -9,8 +9,10 @@ raw_downloads/
 
 # Datasets (too large for version control; regenerate via prepare_*.py)
 data/celeba_spoof/*
+data/celeba_spoof_cropped/*
 data/casia_fasd/*
 !data/celeba_spoof/.gitkeep
+!data/celeba_spoof_cropped/.gitkeep
 !data/casia_fasd/.gitkeep
 data/samples/masked/*
 !data/samples/masked/.gitkeep
