@@ -24,6 +24,7 @@ data/samples/masked/*
 models/**/*.pth
 models/*.onnx
 models/*.tflite
+models/*.task
 
 # Generated outputs
 outputs/plots/*
@@ -45,6 +46,8 @@ results/crop_check/*
 !results/crop_check/.gitkeep
 results/v2_gradcam/*
 !results/v2_gradcam/.gitkeep
+results/masked/examples/*
+!results/masked/examples/.gitkeep
 
 # OS / editor
 .DS_Store
