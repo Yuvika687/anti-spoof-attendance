@@ -86,14 +86,26 @@ def load_official_labels(raw_root: str) -> dict:
     return labels
 
 
-def resolve_test_set_annotations(test_root: str, raw_root: str, official_labels: dict):
+def resolve_test_set_annotations(test_root: str, raw_root: str, official_labels: dict,
+                                  annotation_lookup_root: str = None):
     """
     For every image actually in data/celeba_spoof/test/{live,spoof}/ (these
     are symlinks into the raw download), resolve the real file, look up its
     official annotation vector, and return a list of per-image dicts:
     {filepath, folder_label, spoof_type, illumination, environment, official_live_spoof}
+
+    annotation_lookup_root: if test_root points at a dataset of REAL (non-
+    symlink) files that nonetheless share filenames 1:1 with the original
+    symlinked subset -- e.g. data/celeba_spoof_cropped, built by
+    build_face_cropped_dataset.py from data/celeba_spoof with filenames
+    preserved -- pass the original subset's root here. Annotations are then
+    looked up via <annotation_lookup_root>/<class>/<same filename>'s symlink
+    instead of test_root's own file, while `filepath` in the returned
+    records still points at the real (cropped) image to load. Defaults to
+    test_root itself, which is the original, unchanged behavior.
     """
     raw_root_abs = os.path.abspath(raw_root)
+    lookup_root = annotation_lookup_root or test_root
     records = []
     missing = 0
 
@@ -101,11 +113,13 @@ def resolve_test_set_annotations(test_root: str, raw_root: str, official_labels:
         class_dir = os.path.join(test_root, class_name)
         if not os.path.isdir(class_dir):
             continue
+        lookup_dir = os.path.join(lookup_root, class_name)
         for fname in sorted(os.listdir(class_dir)):
             full = os.path.join(class_dir, fname)
-            if not os.path.islink(full):
+            lookup_full = os.path.join(lookup_dir, fname)
+            if not os.path.islink(lookup_full):
                 continue
-            real = os.path.realpath(full)
+            real = os.path.realpath(lookup_full)
             rel = os.path.normpath(os.path.relpath(real, raw_root_abs))
             attrs = official_labels.get(rel)
             if attrs is None:
@@ -207,6 +221,12 @@ def main():
                               "or models/<backbone>/best_liveness.pth otherwise (matches train.py's "
                               "auto-namespacing).")
     parser.add_argument("--test_root", default=os.path.join(config.CELEBA_SPOOF_DIR, "test"))
+    parser.add_argument("--annotation_lookup_root", default=None,
+                         help="Use when --test_root points at real (non-symlink) files that still "
+                              "share filenames 1:1 with the original symlinked subset -- e.g. "
+                              "data/celeba_spoof_cropped/test, built by build_face_cropped_dataset.py. "
+                              "Annotations are looked up via this root's matching symlink instead. "
+                              "Defaults to --test_root itself (original behavior, unchanged).")
     parser.add_argument("--raw_root", default=os.path.join(config.PROJECT_ROOT, "raw_downloads", "CelebA_Spoof", "CelebA_Spoof"))
     parser.add_argument("--out_json", default=os.path.join(config.PROJECT_ROOT, "results", "breakdown.json"))
     parser.add_argument("--out_plots_dir", default=os.path.join(config.PROJECT_ROOT, "results", "plots"))
@@ -236,7 +256,8 @@ def main():
     print(f"Loaded {len(official_labels)} official annotation entries.")
 
     print(f"\nResolving test-set images against official annotations...")
-    records = resolve_test_set_annotations(args.test_root, args.raw_root, official_labels)
+    records = resolve_test_set_annotations(args.test_root, args.raw_root, official_labels,
+                                            annotation_lookup_root=args.annotation_lookup_root)
     print(f"Resolved {len(records)} test images with real annotations.")
 
     # Sanity check: folder label should always match the official live/spoof

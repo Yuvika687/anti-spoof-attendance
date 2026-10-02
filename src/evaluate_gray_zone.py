@@ -106,6 +106,12 @@ def main():
     parser.add_argument("--threshold", type=float, default=config.DECISION_THRESHOLD)
     parser.add_argument("--out_json", default=os.path.join(config.PROJECT_ROOT, "results", "gray_zone.json"))
     parser.add_argument("--out_plot", default=os.path.join(config.PROJECT_ROOT, "results", "plots", "gray_zone_coverage_vs_error.png"))
+    parser.add_argument("--annotation_lookup_root", default=None,
+                         help="Use when --test_csv was generated from real (non-symlink) files that "
+                              "still share filenames 1:1 with the original symlinked subset -- e.g. "
+                              "data/celeba_spoof_cropped, built by build_face_cropped_dataset.py. "
+                              "PC-replay annotation lookup then uses this root's matching symlink "
+                              "instead. Defaults to None (original behavior, unchanged).")
     args = parser.parse_args()
 
     for path in (args.val_csv, args.test_csv):
@@ -170,7 +176,20 @@ def main():
         for i, fp in enumerate(test_files):
             if not false_accept_mask[i]:
                 continue
-            real = os.path.realpath(fp)
+            # When --test_csv was generated from a dataset of REAL (non-
+            # symlink) files that still share filenames 1:1 with the
+            # original symlinked subset (e.g. data/celeba_spoof_cropped,
+            # built by build_face_cropped_dataset.py), resolve the
+            # official-label lookup via the matching file in
+            # --annotation_lookup_root's symlinked subset instead --
+            # realpath-ing fp directly would just return fp itself and
+            # silently match nothing.
+            if args.annotation_lookup_root:
+                class_name = os.path.basename(os.path.dirname(fp))
+                lookup_path = os.path.join(args.annotation_lookup_root, class_name, os.path.basename(fp))
+            else:
+                lookup_path = fp
+            real = os.path.realpath(lookup_path)
             rel = os.path.normpath(os.path.relpath(real, raw_root_abs))
             attrs = official_labels.get(rel)
             if attrs is None:
