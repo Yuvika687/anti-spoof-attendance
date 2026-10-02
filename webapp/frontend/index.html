@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Liveness Gate</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="brand">
+      <svg class="brand-icon" viewBox="0 0 100 100" fill="none">
+        <path d="M50 8 L85 22 V48 C85 68 70 84 50 92 C30 84 15 68 15 48 V22 Z" stroke="#22D3EE" stroke-width="4"/>
+        <circle cx="38" cy="42" r="4" fill="#22D3EE"/>
+        <circle cx="62" cy="42" r="4" fill="#22D3EE"/>
+        <path d="M34 58 L50 66 L66 58 L66 70 L50 78 L34 70 Z" fill="#22C55E"/>
+      </svg>
+      <div class="brand-text">
+        <span class="name">Liveness Gate</span>
+        <span class="sub">Mask-Aware Anti-Spoof</span>
+      </div>
+    </div>
+    <nav id="nav">
+      <button data-view="overview" class="active">Overview</button>
+      <button data-view="how-it-works">How It Works</button>
+      <button data-view="live">Live Detection</button>
+      <button data-view="analytics">Analytics</button>
+      <button data-view="log">Decision Log</button>
+      <button data-view="tuner">Threshold Tuner</button>
+    </nav>
+    <div class="live-pill"><span class="dot"></span><span id="header-fps">backend connecting...</span></div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- ===================== OVERVIEW ===================== -->
+  <section class="view active" id="view-overview">
+    <div class="eyebrow">CSE471 · Deep Learning for Computer Vision</div>
+    <h1 class="page-title">Mask-Aware Liveness Gate</h1>
+    <p class="page-sub">A liveness checkpoint in front of face recognition. Printed photos, screen replays and video attacks are rejected before identity matching ever runs &mdash; and detection keeps working even when the person is wearing a mask.</p>
+
+    <div class="tiles" id="overview-tiles">
+      <div class="tile"><div class="figure accent">&mdash;</div><div class="label">Accuracy</div></div>
+      <div class="tile"><div class="figure accent">&mdash;</div><div class="label">HTER</div></div>
+      <div class="tile"><div class="figure">&mdash;</div><div class="label">APCER</div></div>
+      <div class="tile"><div class="figure">&mdash;</div><div class="label">BPCER</div></div>
+      <div class="tile"><div class="figure">&mdash;</div><div class="label">Test Images</div></div>
+      <div class="tile"><div class="figure">26.7 FPS</div><div class="label">Direct Python pipeline (no browser/network) &mdash; see Live Detection for real web FPS</div></div>
+    </div>
+
+    <div class="conveyor">
+      <div class="stage"><div class="num">01</div><div class="name">Webcam Frame</div><div class="detail">1920&times;1080 live capture</div></div>
+      <div class="stage"><div class="num">02</div><div class="name">Detect + Crop</div><div class="detail">MediaPipe BlazeFace<br>mask-robust, eye/brow landmarks</div></div>
+      <div class="stage"><div class="num">03</div><div class="name">Classify</div><div class="detail">MobileNetV3-Small<br>fine-tuned CNN</div></div>
+      <div class="stage"><div class="num">04</div><div class="name">Decision</div><div class="detail"><span class="badge live">LIVE &rarr; pass</span> <span class="badge spoof">SPOOF &rarr; reject</span></div></div>
+    </div>
+
+    <div class="card">
+      <h3>Why this matters</h3>
+      <p class="card-sub" style="margin-top:8px">Not a flavor claim &mdash; a measured comparison</p>
+      <div id="overview-baseline"></div>
+    </div>
+  </section>
+
+  <!-- ===================== HOW IT WORKS ===================== -->
+  <section class="view" id="view-how-it-works">
+    <div class="eyebrow">Technical Pipeline</div>
+    <h1 class="page-title">How It Works</h1>
+    <p class="page-sub">Two stages: a mask-aware face detector, then a binary liveness classifier. Both are real, running models &mdash; not simulated.</p>
+
+    <div class="card">
+      <h3>Stage 1 &middot; Mask-Aware Face Detection</h3>
+      <p>MediaPipe's BlazeFace short-range model localizes faces primarily from upper-face landmarks (eyes, eyebrows, nose bridge), so it keeps working when a mask covers the mouth and nose. It outputs 6 keypoints, not a dense mesh.</p>
+    </div>
+    <div class="card">
+      <h3>Stage 2 &middot; CNN Liveness Classifier</h3>
+      <p>A MobileNetV3-Small backbone (ImageNet-pretrained, fine-tuned end-to-end) scores the cropped face as LIVE or SPOOF. It outputs one number &mdash; P(spoof) &mdash; nothing else: no attack-type classification, no mask-type classification, no depth or blink analysis. Single RGB frame in, one probability out.</p>
+    </div>
+    <div class="card">
+      <h3>Training Data</h3>
+      <div id="how-dataset-facts"></div>
+    </div>
+    <div class="card">
+      <h3>Evaluation Metrics</h3>
+      <p>Reported using the standard presentation-attack-detection metrics: <b>APCER</b> (spoof wrongly accepted as live), <b>BPCER</b> (live wrongly rejected as spoof), and <b>HTER</b> = (APCER+BPCER)/2.</p>
+    </div>
+  </section>
+
+  <!-- ===================== LIVE DETECTION ===================== -->
+  <section class="view" id="view-live">
+    <div class="eyebrow">Real Webcam &middot; Real Model</div>
+    <h1 class="page-title">Live Detection</h1>
+    <p class="page-sub">Runs the actual trained model against your camera, frame by frame, through the backend. Every decision below is logged to the real decision log.</p>
+
+    <div class="detect-layout">
+      <div class="card" style="padding:0;overflow:hidden">
+        <div class="cam-wrap" id="cam-wrap">
+          <video id="cam-video" autoplay muted playsinline></video>
+          <canvas id="cam-canvas" style="display:none"></canvas>
+          <svg class="cam-overlay" id="cam-overlay" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+          <div class="scanner-corners"><span></span><span></span><span></span><span></span></div>
+          <div class="cam-status" id="cam-status"></div>
+          <div class="cam-fps" id="cam-fps-live">web fps: &mdash;</div>
+          <div class="cam-stop" id="cam-stop" style="display:none">
+            <button id="cam-stop-btn">&#9632; Stop</button>
+          </div>
+          <div class="cam-start" id="cam-start">
+            <button id="cam-start-btn">&#9679; Start Live Detection</button>
+          </div>
+        </div>
+        <div class="cam-stats-strip">
+          <div class="stat"><div class="k">Raw (this frame)</div><div class="v" id="stat-raw">&mdash;</div></div>
+          <div class="stat"><div class="k">Smoothed (decision)</div><div class="v" id="stat-smoothed">&mdash;</div></div>
+          <div class="stat"><div class="k">Smoothing window</div><div class="v" id="stat-window">&mdash;</div></div>
+          <div class="stat"><div class="k">Web round-trip FPS</div><div class="v" id="stat-fps">&mdash;</div></div>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <h3>Current Decision</h3>
+          <div class="stat-row"><span class="k">Status</span><span class="v status-text" id="live-status">idle</span></div>
+          <div class="confidence-bar-track"><div class="confidence-bar-fill" id="live-confidence-bar" style="width:0%"></div></div>
+          <div class="stat-row" style="margin-top:4px"><span class="k">Confidence (smoothed)</span><span class="v" id="live-confidence">&mdash;</span></div>
+          <div class="stat-row"><span class="k">Threshold</span><span class="v" id="live-threshold">&mdash;</span></div>
+        </div>
+        <div class="card">
+          <h3>Recent Decisions</h3>
+          <div class="card-sub">One entry per event (face appears / decision changes) &mdash; not per frame</div>
+          <div id="live-feed"><div class="empty-state">No decisions yet this session.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3>About the FPS numbers</h3>
+      <p style="color:var(--text-muted);font-size:13.5px">The <b>26.7 FPS</b> figure shown on Overview/How It Works was measured by calling the detection + classification functions directly in Python, with no browser, network, or JPEG-encoding overhead. The <b>Web round-trip FPS</b> above is the real, slower number for this actual page: camera capture &rarr; JPEG encode &rarr; HTTP upload &rarr; Flask &rarr; model &rarr; JSON response &rarr; render, measured live, right now.</p>
+    </div>
+  </section>
+
+  <!-- ===================== ANALYTICS ===================== -->
+  <section class="view" id="view-analytics">
+    <div class="eyebrow">Held-Out Test Set</div>
+    <h1 class="page-title">Model Performance</h1>
+    <p class="page-sub">Evaluated on 3,900 test images from identities never seen during training.</p>
+
+    <div class="tiles" id="analytics-tiles"></div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h3>Training Curves</h3>
+        <div class="card-sub">15 epochs &middot; train vs. validation</div>
+        <img src="/api/plots/training-curves.png" alt="Training and validation loss/accuracy over 15 epochs">
+      </div>
+      <div class="card">
+        <h3>Confusion Matrix</h3>
+        <div class="card-sub">3,900 test images</div>
+        <img src="/api/plots/confusion-matrix.png" alt="Confusion matrix of live vs spoof predictions">
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== DECISION LOG ===================== -->
+  <section class="view" id="view-log">
+    <div class="eyebrow">Real-Time Ledger</div>
+    <h1 class="page-title">Decision Log</h1>
+    <p class="page-sub">Every real decision made by the live pipeline (from the real webcam feed), read directly from the log file <code class="mono">logs/attendance_log.csv</code>. No per-person identity &mdash; this project does not do face recognition.</p>
+
+    <div class="card" style="padding:0">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Timestamp</th><th>Decision</th><th>Confidence</th><th>Bounding Box</th></tr></thead>
+          <tbody id="log-rows"></tbody>
+        </table>
+      </div>
+      <div class="empty-state" id="log-empty" style="display:none">No decisions logged yet. Run Live Detection to generate real entries.</div>
+    </div>
+  </section>
+
+  <!-- ===================== THRESHOLD TUNER ===================== -->
+  <section class="view" id="view-tuner">
+    <div class="eyebrow">Runtime Configuration</div>
+    <h1 class="page-title">Threshold Tuner</h1>
+    <p class="page-sub">Moves the real decision boundary on P(spoof). APCER/BPCER/HTER below are recomputed live from the real 3,900-image test set at whatever threshold you pick &mdash; not a precomputed lookup table.</p>
+
+    <div class="card">
+      <h3>Decision Threshold (&tau;)</h3>
+      <div class="slider-row">
+        <input type="range" id="threshold-slider" min="0" max="1" step="0.01" value="0.5">
+        <div class="slider-val" id="threshold-val">0.50</div>
+      </div>
+      <div class="tiles" id="tuner-tiles" style="margin-bottom:0"></div>
+    </div>
+
+    <div class="card">
+      <h3>Apply to Live Detection</h3>
+      <p>This is the same threshold Live Detection uses once applied.</p>
+      <div class="stat-row"><span class="k">Currently live</span><span class="v" id="tuner-current">&mdash;</span></div>
+      <button id="tuner-apply-btn" style="margin-top:12px;background:var(--cyan);color:#001015;border:none;font-weight:700;padding:10px 20px;border-radius:6px;cursor:pointer">Apply This Threshold</button>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <div>CSE471 &middot; Deep Learning for Computer Vision &middot; Mask-Aware Liveness Gate</div>
+    <div>All data on this page is read from real project files or computed live &mdash; nothing is hardcoded.</div>
+  </div>
+</footer>
+
+<script src="assets/app.js"></script>
+</body>
+</html>

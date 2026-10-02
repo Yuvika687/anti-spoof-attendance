@@ -41,6 +41,15 @@ class LivenessPredictor:
         self.transform = get_eval_transform(self.image_size)
 
     @torch.no_grad()
+    def predict_prob(self, face_crop_bgr: np.ndarray) -> float:
+        """Returns the raw, unsmoothed P(spoof) for a single crop, with no
+        thresholding applied. Useful for callers that want to do their own
+        temporal smoothing across frames (see webapp/backend/app.py)."""
+        pil_image = bgr_crop_to_pil(face_crop_bgr)
+        tensor = self.transform(pil_image).unsqueeze(0).to(self.device)
+        logit = self.model(tensor)
+        return torch.sigmoid(logit).item()
+
     def predict(self, face_crop_bgr: np.ndarray) -> Tuple[str, float]:
         """
         Args:
@@ -50,11 +59,7 @@ class LivenessPredictor:
             (label, confidence) where label is "LIVE" or "SPOOF" and
             confidence is the model's confidence in that label, in [0, 1].
         """
-        pil_image = bgr_crop_to_pil(face_crop_bgr)
-        tensor = self.transform(pil_image).unsqueeze(0).to(self.device)
-
-        logit = self.model(tensor)
-        prob_spoof = torch.sigmoid(logit).item()
+        prob_spoof = self.predict_prob(face_crop_bgr)
 
         if prob_spoof >= self.threshold:
             return config.CLASS_NAMES[config.LABEL_SPOOF], prob_spoof

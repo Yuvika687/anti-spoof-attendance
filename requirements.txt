@@ -30,3 +30,6 @@ onnxruntime>=1.16.0
 # Notebook support
 jupyter>=1.0.0
 ipykernel>=6.25.0
+
+# Web dashboard backend (webapp/)
+flask>=3.0.0
