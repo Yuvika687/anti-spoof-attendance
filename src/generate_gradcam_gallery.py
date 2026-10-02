@@ -55,16 +55,29 @@ def load_predictions(csv_path: str):
     return rows
 
 
-def attach_spoof_type(rows, raw_root: str):
+def attach_spoof_type(rows, raw_root: str, annotation_lookup_root: str = None):
     """Looks up each row's official spoof_type (idx 40) via the same
     symlink-resolution technique as evaluate_breakdown.py. Only meaningful
     for spoof-labeled rows (live rows get spoof_type=0, the dataset's own
-    'N/A' marker -- verified in evaluate_breakdown.py's investigation)."""
+    'N/A' marker -- verified in evaluate_breakdown.py's investigation).
+
+    annotation_lookup_root: set when rows[]['filepath'] points at real
+    (non-symlink) files that still share filenames 1:1 with the original
+    symlinked subset -- e.g. data/celeba_spoof_cropped, built by
+    build_face_cropped_dataset.py -- so the lookup uses that original
+    subset's matching symlink instead of realpath-ing the cropped file
+    itself (which would just return itself and match nothing). Defaults to
+    None, i.e. the original, unchanged behavior."""
     official_labels = load_official_labels(raw_root)
     raw_root_abs = os.path.abspath(raw_root)
     missing = 0
     for r in rows:
-        real = os.path.realpath(r["filepath"])
+        if annotation_lookup_root:
+            class_name = os.path.basename(os.path.dirname(r["filepath"]))
+            lookup_path = os.path.join(annotation_lookup_root, class_name, os.path.basename(r["filepath"]))
+        else:
+            lookup_path = r["filepath"]
+        real = os.path.realpath(lookup_path)
         rel = os.path.normpath(os.path.relpath(real, raw_root_abs))
         attrs = official_labels.get(rel)
         if attrs is None:
@@ -96,6 +109,10 @@ def main():
     parser.add_argument("--predictions_csv", default=os.path.join(config.PREDICTIONS_DIR, "predictions_test.csv"))
     parser.add_argument("--raw_root", default=os.path.join(config.PROJECT_ROOT, "raw_downloads", "CelebA_Spoof", "CelebA_Spoof"))
     parser.add_argument("--out_dir", default=os.path.join(config.PROJECT_ROOT, "results", "gradcam"))
+    parser.add_argument("--annotation_lookup_root", default=None,
+                         help="Use when --predictions_csv was generated from real (non-symlink) files "
+                              "sharing filenames 1:1 with the original symlinked subset -- e.g. "
+                              "data/celeba_spoof_cropped. Defaults to None (original behavior).")
     args = parser.parse_args()
 
     if args.checkpoint is None:
@@ -126,7 +143,7 @@ def main():
     print(f"Loaded {len(rows)} real predictions.")
 
     print(f"Attaching official spoof-type annotations ...")
-    rows = attach_spoof_type(rows, args.raw_root)
+    rows = attach_spoof_type(rows, args.raw_root, annotation_lookup_root=args.annotation_lookup_root)
 
     false_accepts = [r for r in rows if r["true_label"] == config.LABEL_SPOOF and r["pred_label"] == config.LABEL_LIVE]
     false_rejects = [r for r in rows if r["true_label"] == config.LABEL_LIVE and r["pred_label"] == config.LABEL_SPOOF]
