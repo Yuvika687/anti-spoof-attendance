@@ -191,7 +191,16 @@ anti-spoof-attendance/
 - [ ] Record real-world webcam footage and run `evaluate_real_world.py`
 - [ ] Evaluate cross-dataset on CASIA-FASD
 - [ ] Integrate with the ArcFace attendance module
-- [ ] Add a LICENSE and a short model card
+- [x] Add a LICENSE and a short model card
+
+## 📄 License & model card
+
+Code is [MIT-licensed](LICENSE). Trained model weights are derived from
+CelebA-Spoof (research-only, non-commercial) and inherit that
+restriction regardless of the code license — see the note at the bottom
+of [`LICENSE`](LICENSE). Model details, intended use, evaluation
+numbers, and known limitations are documented in
+[`MODEL_CARD.md`](MODEL_CARD.md).
 
 ## 🙏 Acknowledgements & references
 
