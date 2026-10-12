@@ -1,0 +1,5 @@
+{
+  "title": "Anti-Spoof Attendance",
+  "tagline": "Mask-aware liveness gate for face attendance — blocks photo, replay & 3D-mask spoofs (98.69% acc, 1.31% HTER)",
+  "progress": 86
+}
