@@ -213,6 +213,21 @@ export async function initLivePage(root) {
     detectLoop();
   }
 
+  // The overlay SVG maps bbox coordinates as percentages of the RAW frame
+  // (video.videoWidth/videoHeight). If .cam-wrap's displayed aspect ratio
+  // doesn't match the real stream's, object-fit:cover crops the visible
+  // video differently than those percentages assume, and the drawn box
+  // drifts off the real face (reported: box drawn on the neck, below the
+  // face). Fix: match the container's aspect ratio to the real stream's
+  // every time metadata is (re-)available -- registered once here, not
+  // inside startCamera(), so repeated Start/Stop cycles don't stack
+  // duplicate listeners on the same persistent <video> element.
+  video.addEventListener("loadedmetadata", () => {
+    if (video.videoWidth && video.videoHeight) {
+      camWrap.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+    }
+  });
+
   function stopCamera() {
     liveRunning = false;
     if (mediaStream) mediaStream.getTracks().forEach((t) => t.stop());
@@ -260,6 +275,14 @@ export async function initLivePage(root) {
       grid.innerHTML = '<div class="empty-state">Could not load sample images.</div>';
     }
   }
+
+  // Same aspect-ratio fix as the camera stream, for the static sample
+  // image (its container uses the same object-fit:cover rule).
+  camStill.addEventListener("load", () => {
+    if (camStill.naturalWidth && camStill.naturalHeight) {
+      camWrap.style.aspectRatio = `${camStill.naturalWidth} / ${camStill.naturalHeight}`;
+    }
+  });
 
   async function runSample(id) {
     activeSampleId = id;

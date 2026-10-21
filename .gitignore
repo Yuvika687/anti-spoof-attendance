@@ -49,6 +49,9 @@ results/v2_gradcam/*
 results/masked/examples/*
 !results/masked/examples/.gitkeep
 
+# Debug frames (LIVENESS_DEBUG_FRAMES=1), real captures saved for manual inspection
+webapp/backend/debug_frames/
+
 # OS / editor
 .DS_Store
 .ipynb_checkpoints/
